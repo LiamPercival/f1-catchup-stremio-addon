@@ -2,6 +2,7 @@
 // Simplified version with better error handling
 
 const F1_API = 'https://api.jolpi.ca/ergast/f1';
+const OPENF1_API = 'https://api.openf1.org/v1';
 const TORBOX_API = 'https://api.torbox.app/v1/api';
 
 // Country codes for flags
@@ -118,30 +119,93 @@ async function fetchWithCache(url, cacheKey, ctx, ttl = 86400) {
     return data;
 }
 
-// Get seasons from F1 API
+// Get seasons - prioritize recent OpenF1 years
 async function getSeasons(ctx) {
-    try {
-        const cacheKey = 'https://f1catchup-cache/seasons';
-        const data = await fetchWithCache(
-            `${F1_API}/seasons.json?limit=100`,
-            cacheKey,
-            ctx
-        );
+    // OpenF1 supports 2023+ well. 
+    // We'll hardcode the list of supported years to avoid an extra API call 
+    // and ensure we show the most relevant ones.
+    const currentYear = new Date().getFullYear();
+    const openF1Years = [];
+    for (let y = currentYear; y >= 2023; y--) {
+        openF1Years.push(y);
+    }
+    
+    // Older years from Ergast (optional, can be expanded)
+    const legacyYears = [2022, 2021, 2020];
+    
+    return [...openF1Years, ...legacyYears];
+}
 
-        return data.MRData.SeasonTable.Seasons
-            .map(s => parseInt(s.season))
-            .filter(s => s >= 2000)
-            .sort((a, b) => b - a);
-    } catch (error) {
-        console.error('Failed to fetch seasons:', error);
-        // Fallback to hardcoded recent seasons
-        const currentYear = new Date().getFullYear();
-        return Array.from({ length: 25 }, (_, i) => currentYear - i);
+// OpenF1 Data Helper
+async function getOpenF1Calendar(year, ctx) {
+    try {
+        const [meetings, sessions] = await Promise.all([
+            fetchWithCache(`${OPENF1_API}/meetings?year=${year}`, `openf1-meetings-${year}`, ctx),
+            fetchWithCache(`${OPENF1_API}/sessions?year=${year}`, `openf1-sessions-${year}`, ctx)
+        ]);
+
+        if (!meetings || !sessions) return [];
+
+        // Sort meetings by date
+        meetings.sort((a, b) => new Date(a.date_start) - new Date(b.date_start));
+
+        return meetings.map((meeting, index) => {
+            const meetingSessions = sessions.filter(s => s.meeting_key === meeting.meeting_key);
+            
+            // Find Race session for main date
+            const raceSession = meetingSessions.find(s => s.session_name === 'Race') || {};
+            
+            // Map other sessions
+            const sessionMap = {};
+            meetingSessions.forEach(s => {
+                const start = new Date(s.date_start);
+                const dateStr = start.toISOString().split('T')[0];
+                const timeStr = start.toISOString().split('T')[1].replace('Z', '+00:00'); // Ergast format roughly
+
+                // Mapping OpenF1 names to our internal ID structure
+                let type = null;
+                const name = s.session_name.toLowerCase();
+                
+                if (name.includes('practice 1')) type = 'FirstPractice';
+                else if (name.includes('practice 2')) type = 'SecondPractice';
+                else if (name.includes('practice 3')) type = 'ThirdPractice';
+                else if (name === 'qualifying') type = 'Qualifying';
+                else if (name === 'sprint') type = 'Sprint';
+                else if (name === 'sprint qualifying' || name === 'sprint shootout') type = 'SprintQualifying';
+
+                if (type) {
+                    sessionMap[type] = { date: dateStr, time: timeStr };
+                }
+            });
+
+            // Fallback for race date if missing (rare)
+            const raceDateStart = raceSession.date_start ? new Date(raceSession.date_start) : new Date(meeting.date_start);
+            
+            return {
+                round: index + 1,
+                name: meeting.meeting_name,
+                circuit: meeting.circuit_short_name,
+                location: meeting.location,
+                date: raceDateStart.toISOString().split('T')[0],
+                time: raceDateStart.toISOString().split('T')[1].replace('Z', '+00:00'),
+                ...sessionMap
+            };
+        });
+
+    } catch (e) {
+        console.error(`OpenF1 fetch error for ${year}:`, e);
+        return [];
     }
 }
 
 // Get calendar for a season (preserves session fields for sprint detection)
 async function getCalendar(year, ctx) {
+    // Hybrid Strategy: OpenF1 for 2023+, Ergast for older
+    if (year >= 2023) {
+        return getOpenF1Calendar(year, ctx);
+    }
+
+    // Legacy Ergast Fetch
     try {
         const cacheKey = `https://f1catchup-cache/calendar/${year}`;
         const data = await fetchWithCache(
@@ -149,6 +213,8 @@ async function getCalendar(year, ctx) {
             cacheKey,
             ctx
         );
+
+        if (!data || !data.MRData) return [];
 
         return data.MRData.RaceTable.Races.map(race => ({
             round: parseInt(race.round),
