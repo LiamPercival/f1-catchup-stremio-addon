@@ -1,0 +1,17 @@
+{
+  "name": "f1-catchup-addon",
+  "version": "3.0.0",
+  "description": "Stremio addon for Formula 1 content with Torbox integration",
+  "private": true,
+  "scripts": {
+    "dev": "npx wrangler pages dev public --compatibility-date=2024-01-01",
+    "deploy": "npx wrangler pages deploy public --project-name=f1-catchup"
+  },
+  "keywords": [
+    "stremio",
+    "addon",
+    "f1",
+    "formula1"
+  ],
+  "license": "MIT"
+}
