@@ -1,51 +1,51 @@
 // F1 Catchup - Cloudflare Pages Function
 // Fixed version - corrected date format and video ordering
 
-const F1_API = ‘https://api.jolpi.ca/ergast/f1’;
-const OPENF1_API = ‘https://api.openf1.org/v1’;
-const TORBOX_API = ‘https://api.torbox.app/v1/api’;
+const F1_API = “https://api.jolpi.ca/ergast/f1”;
+const OPENF1_API = “https://api.openf1.org/v1”;
+const TORBOX_API = “https://api.torbox.app/v1/api”;
 
 // Country codes for flags
 const COUNTRY_FLAGS = {
-‘australia’: ‘au’, ‘china’: ‘cn’, ‘japan’: ‘jp’, ‘bahrain’: ‘bh’,
-‘saudi arabia’: ‘sa’, ‘usa’: ‘us’, ‘united states’: ‘us’, ‘italy’: ‘it’,
-‘monaco’: ‘mc’, ‘spain’: ‘es’, ‘canada’: ‘ca’, ‘austria’: ‘at’,
-‘uk’: ‘gb’, ‘great britain’: ‘gb’, ‘united kingdom’: ‘gb’,
-‘belgium’: ‘be’, ‘hungary’: ‘hu’,
-‘netherlands’: ‘nl’, ‘azerbaijan’: ‘az’, ‘singapore’: ‘sg’, ‘mexico’: ‘mx’,
-‘brazil’: ‘br’, ‘qatar’: ‘qa’, ‘uae’: ‘ae’, ‘abu dhabi’: ‘ae’, ‘united arab emirates’: ‘ae’,
-‘portugal’: ‘pt’, ‘turkey’: ‘tr’, ‘turkiye’: ‘tr’,
-‘russia’: ‘ru’, ‘germany’: ‘de’,
-‘france’: ‘fr’, ‘malaysia’: ‘my’, ‘korea’: ‘kr’, ‘south korea’: ‘kr’,
-‘india’: ‘in’, ‘vietnam’: ‘vn’,
-‘las vegas’: ‘us’, ‘miami’: ‘us’, ‘emilia romagna’: ‘it’, ‘imola’: ‘it’,
-‘south africa’: ‘za’, ‘thailand’: ‘th’, ‘argentina’: ‘ar’,
-‘switzerland’: ‘ch’, ‘sweden’: ‘se’, ‘morocco’: ‘ma’, ‘rwanda’: ‘rw’,
+“australia”: “au”, “china”: “cn”, “japan”: “jp”, “bahrain”: “bh”,
+“saudi arabia”: “sa”, “usa”: “us”, “united states”: “us”, “italy”: “it”,
+“monaco”: “mc”, “spain”: “es”, “canada”: “ca”, “austria”: “at”,
+“uk”: “gb”, “great britain”: “gb”, “united kingdom”: “gb”,
+“belgium”: “be”, “hungary”: “hu”,
+“netherlands”: “nl”, “azerbaijan”: “az”, “singapore”: “sg”, “mexico”: “mx”,
+“brazil”: “br”, “qatar”: “qa”, “uae”: “ae”, “abu dhabi”: “ae”, “united arab emirates”: “ae”,
+“portugal”: “pt”, “turkey”: “tr”, “turkiye”: “tr”,
+“russia”: “ru”, “germany”: “de”,
+“france”: “fr”, “malaysia”: “my”, “korea”: “kr”, “south korea”: “kr”,
+“india”: “in”, “vietnam”: “vn”,
+“las vegas”: “us”, “miami”: “us”, “emilia romagna”: “it”, “imola”: “it”,
+“south africa”: “za”, “thailand”: “th”, “argentina”: “ar”,
+“switzerland”: “ch”, “sweden”: “se”, “morocco”: “ma”, “rwanda”: “rw”,
 };
 
 const getFlagUrl = (country) => {
 const normalized = country.toLowerCase().trim();
-const code = COUNTRY_FLAGS[normalized] || ‘un’;
-return `https://flagcdn.com/w320/${code}.png`;
+const code = COUNTRY_FLAGS[normalized] || “un”;
+return “https://flagcdn.com/w320/” + code + “.png”;
 };
 
 // Session definitions
 const SESSION_DEFS = [
-{ apiField: ‘FirstPractice’,    id: ‘fp1’,          name: ‘FP1’,               searchTerm: ‘Practice 1’ },
-{ apiField: ‘SecondPractice’,   id: ‘fp2’,          name: ‘FP2’,               searchTerm: ‘Practice 2’ },
-{ apiField: ‘ThirdPractice’,    id: ‘fp3’,          name: ‘FP3’,               searchTerm: ‘Practice 3’ },
-{ apiField: ‘SprintQualifying’, id: ‘sprintquali’,  name: ‘Sprint Qualifying’, searchTerm: ‘Sprint Qualifying’ },
-{ apiField: ‘Sprint’,           id: ‘sprint’,       name: ‘Sprint’,            searchTerm: ‘Sprint’ },
-{ apiField: ‘Qualifying’,       id: ‘qualifying’,   name: ‘Qualifying’,        searchTerm: ‘Qualifying’ },
+{ apiField: “FirstPractice”,    id: “fp1”,          name: “FP1”,               searchTerm: “Practice 1” },
+{ apiField: “SecondPractice”,   id: “fp2”,          name: “FP2”,               searchTerm: “Practice 2” },
+{ apiField: “ThirdPractice”,    id: “fp3”,          name: “FP3”,               searchTerm: “Practice 3” },
+{ apiField: “SprintQualifying”, id: “sprintquali”,  name: “Sprint Qualifying”, searchTerm: “Sprint Qualifying” },
+{ apiField: “Sprint”,           id: “sprint”,       name: “Sprint”,            searchTerm: “Sprint” },
+{ apiField: “Qualifying”,       id: “qualifying”,   name: “Qualifying”,        searchTerm: “Qualifying” },
 ];
 
-const RACE_SESSION = { id: ‘grandprix’, name: ‘Grand Prix’, searchTerm: ‘Race’ };
+const RACE_SESSION = { id: “grandprix”, name: “Grand Prix”, searchTerm: “Race” };
 const ALL_SESSION_DEFS = […SESSION_DEFS, RACE_SESSION];
 
 // Image paths
-const IMAGE_POSTER_PATH = ‘/images/poster.png’;
-const IMAGE_LOGO_PATH = ‘/images/logo.png’;
-const IMAGE_BG_PATH = ‘/images/background.jpg’;
+const IMAGE_POSTER_PATH = “/images/poster.png”;
+const IMAGE_LOGO_PATH = “/images/logo.png”;
+const IMAGE_BG_PATH = “/images/background.jpg”;
 
 // Determine which sessions exist for a given race
 function getSessionsForRace(race) {
@@ -72,27 +72,26 @@ return sessions;
 }
 
 // Helper to format date/time properly for Stremio
-// Handles cases where time already has timezone (+00:00) or ends with Z
 function formatReleaseDate(date, time, fallbackYear) {
 if (!date) {
-return `${fallbackYear}-01-01T00:00:00.000Z`;
+return fallbackYear + “-01-01T00:00:00.000Z”;
 }
 
 ```
 if (time) {
     // Remove trailing Z if present
-    let cleanTime = time.replace(/Z$/, '');
+    var cleanTime = time.replace(/Z$/, "");
     
-    // If time already has timezone offset (+00:00 or -05:00 etc), use as-is
+    // If time already has timezone offset, use as-is
     if (cleanTime.match(/[+-]\d{2}:\d{2}$/)) {
-        return `${date}T${cleanTime}`;
+        return date + "T" + cleanTime;
     }
     
     // Otherwise add Z for UTC
-    return `${date}T${cleanTime}Z`;
+    return date + "T" + cleanTime + "Z";
 }
 
-return `${date}T00:00:00.000Z`;
+return date + "T00:00:00.000Z";
 ```
 
 }
@@ -106,18 +105,18 @@ if (cacheResponse) {
 return cacheResponse.json();
 }
 } catch (cacheErr) {
-console.warn(‘Cache read failed:’, cacheErr);
+console.warn(“Cache read failed:”, cacheErr);
 }
 
 ```
 const response = await fetch(url, {
     headers: {
-        'User-Agent': 'F1CatchupAddon/0.1.0'
+        "User-Agent": "F1CatchupAddon/0.1.0"
     }
 });
 
 if (!response.ok) {
-    throw new Error(`API returned ${response.status}: ${response.statusText}`);
+    throw new Error("API returned " + response.status + ": " + response.statusText);
 }
 
 const data = await response.json();
@@ -126,13 +125,13 @@ try {
     const cache = caches.default;
     const cacheableResponse = new Response(JSON.stringify(data), {
         headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': `public, max-age=${ttl}`
+            "Content-Type": "application/json",
+            "Cache-Control": "public, max-age=" + ttl
         }
     });
     ctx.waitUntil(cache.put(cacheKey, cacheableResponse.clone()));
 } catch (cacheErr) {
-    console.warn('Cache write failed:', cacheErr);
+    console.warn("Cache write failed:", cacheErr);
 }
 
 return data;
@@ -144,7 +143,7 @@ return data;
 async function getSeasons(ctx) {
 const currentYear = new Date().getFullYear();
 const openF1Years = [];
-for (let y = currentYear; y >= 2023; y–) {
+for (var y = currentYear; y >= 2023; y–) {
 openF1Years.push(y);
 }
 const legacyYears = [2022, 2021, 2020];
@@ -155,8 +154,8 @@ return […openF1Years, …legacyYears];
 async function getOpenF1Calendar(year, ctx) {
 try {
 const [meetings, sessions] = await Promise.all([
-fetchWithCache(`${OPENF1_API}/meetings?year=${year}`, `openf1-meetings-${year}`, ctx),
-fetchWithCache(`${OPENF1_API}/sessions?year=${year}`, `openf1-sessions-${year}`, ctx)
+fetchWithCache(OPENF1_API + “/meetings?year=” + year, “openf1-meetings-” + year, ctx),
+fetchWithCache(OPENF1_API + “/sessions?year=” + year, “openf1-sessions-” + year, ctx)
 ]);
 
 ```
@@ -166,12 +165,12 @@ fetchWithCache(`${OPENF1_API}/sessions?year=${year}`, `openf1-sessions-${year}`,
 
     const testingEvents = meetings.filter(m => {
         const name = m.meeting_name.toLowerCase();
-        return name.includes('testing') || name.includes('test');
+        return name.includes("testing") || name.includes("test");
     });
     
     const raceWeekends = meetings.filter(m => {
         const name = m.meeting_name.toLowerCase();
-        return !name.includes('testing') && !name.includes('test');
+        return !name.includes("testing") && !name.includes("test");
     });
 
     const results = [];
@@ -184,14 +183,13 @@ fetchWithCache(`${OPENF1_API}/sessions?year=${year}`, `openf1-sessions-${year}`,
         const testingSessions = [];
         meetingSessions.forEach((s, idx) => {
             const start = new Date(s.date_start);
-            const dateStr = start.toISOString().split('T')[0];
-            // Use clean time without milliseconds or Z (we'll handle timezone in formatReleaseDate)
-            const timeStr = start.toISOString().split('T')[1].split('.')[0];
+            const dateStr = start.toISOString().split("T")[0];
+            const timeStr = start.toISOString().split("T")[1].split(".")[0];
             
             testingSessions.push({
-                id: `test${idx + 1}`,
+                id: "test" + (idx + 1),
                 name: s.session_name,
-                searchTerm: `Testing ${s.session_name}`,
+                searchTerm: "Testing " + s.session_name,
                 date: dateStr,
                 time: timeStr
             });
@@ -208,8 +206,8 @@ fetchWithCache(`${OPENF1_API}/sessions?year=${year}`, `openf1-sessions-${year}`,
             location: meeting.location,
             country: meeting.country_name || meeting.location,
             countryFlag: meeting.country_flag,
-            date: startDate.toISOString().split('T')[0],
-            time: startDate.toISOString().split('T')[1].split('.')[0],
+            date: startDate.toISOString().split("T")[0],
+            time: startDate.toISOString().split("T")[1].split(".")[0],
             testingSessions: testingSessions
         });
     });
@@ -217,23 +215,23 @@ fetchWithCache(`${OPENF1_API}/sessions?year=${year}`, `openf1-sessions-${year}`,
     // Race weekends
     raceWeekends.forEach((meeting, index) => {
         const meetingSessions = sessions.filter(s => s.meeting_key === meeting.meeting_key);
-        const raceSession = meetingSessions.find(s => s.session_name === 'Race') || {};
+        const raceSession = meetingSessions.find(s => s.session_name === "Race") || {};
         
         const sessionMap = {};
         meetingSessions.forEach(s => {
             const start = new Date(s.date_start);
-            const dateStr = start.toISOString().split('T')[0];
-            const timeStr = start.toISOString().split('T')[1].split('.')[0];
+            const dateStr = start.toISOString().split("T")[0];
+            const timeStr = start.toISOString().split("T")[1].split(".")[0];
 
-            let type = null;
+            var type = null;
             const name = s.session_name.toLowerCase();
             
-            if (name.includes('practice 1')) type = 'FirstPractice';
-            else if (name.includes('practice 2')) type = 'SecondPractice';
-            else if (name.includes('practice 3')) type = 'ThirdPractice';
-            else if (name === 'qualifying') type = 'Qualifying';
-            else if (name === 'sprint') type = 'Sprint';
-            else if (name === 'sprint qualifying' || name === 'sprint shootout') type = 'SprintQualifying';
+            if (name.includes("practice 1")) type = "FirstPractice";
+            else if (name.includes("practice 2")) type = "SecondPractice";
+            else if (name.includes("practice 3")) type = "ThirdPractice";
+            else if (name === "qualifying") type = "Qualifying";
+            else if (name === "sprint") type = "Sprint";
+            else if (name === "sprint qualifying" || name === "sprint shootout") type = "SprintQualifying";
 
             if (type) {
                 sessionMap[type] = { date: dateStr, time: timeStr };
@@ -249,8 +247,8 @@ fetchWithCache(`${OPENF1_API}/sessions?year=${year}`, `openf1-sessions-${year}`,
             location: meeting.location,
             country: meeting.country_name || meeting.location,
             countryFlag: meeting.country_flag,
-            date: raceDateStart.toISOString().split('T')[0],
-            time: raceDateStart.toISOString().split('T')[1].split('.')[0],
+            date: raceDateStart.toISOString().split("T")[0],
+            time: raceDateStart.toISOString().split("T")[1].split(".")[0],
             ...sessionMap
         });
     });
@@ -258,7 +256,7 @@ fetchWithCache(`${OPENF1_API}/sessions?year=${year}`, `openf1-sessions-${year}`,
     return results;
 
 } catch (e) {
-    console.error(`OpenF1 fetch error for ${year}:`, e);
+    console.error("OpenF1 fetch error for " + year + ":", e);
     return [];
 }
 ```
@@ -273,9 +271,9 @@ return getOpenF1Calendar(year, ctx);
 
 ```
 try {
-    const cacheKey = `https://f1catchup-cache/calendar/${year}`;
+    const cacheKey = "https://f1catchup-cache/calendar/" + year;
     const data = await fetchWithCache(
-        `${F1_API}/${year}.json?limit=100`,
+        F1_API + "/" + year + ".json?limit=100",
         cacheKey,
         ctx
     );
@@ -297,7 +295,7 @@ try {
         SprintQualifying: race.SprintQualifying
     }));
 } catch (error) {
-    console.error(`Failed to fetch ${year} calendar:`, error);
+    console.error("Failed to fetch " + year + " calendar:", error);
     return [];
 }
 ```
@@ -306,33 +304,33 @@ try {
 
 // Search Torbox
 async function searchTorbox(query, apiKey) {
-if (!apiKey) return { torrents: [], error: ‘No API key provided’ };
+if (!apiKey) return { torrents: [], error: “No API key provided” };
 
 ```
 try {
     const response = await fetch(
-        `${TORBOX_API}/torrents/search?query=${encodeURIComponent(query)}`,
+        TORBOX_API + "/torrents/search?query=" + encodeURIComponent(query),
         { 
             headers: { 
-                'Authorization': `Bearer ${apiKey}`,
-                'User-Agent': 'F1CatchupAddon/0.1.0'
+                "Authorization": "Bearer " + apiKey,
+                "User-Agent": "F1CatchupAddon/0.1.0"
             } 
         }
     );
 
     if (response.status === 401 || response.status === 403) {
-        return { torrents: [], error: 'invalid_api_key' };
+        return { torrents: [], error: "invalid_api_key" };
     }
 
     if (!response.ok) {
-        return { torrents: [], error: `Torbox API error: ${response.status}` };
+        return { torrents: [], error: "Torbox API error: " + response.status };
     }
 
     const data = await response.json();
-    return { torrents: data?.data?.torrents || [], error: null };
+    return { torrents: (data && data.data && data.data.torrents) || [], error: null };
 } catch (error) {
-    console.error('Torbox search error:', error);
-    return { torrents: [], error: 'Network error searching Torbox' };
+    console.error("Torbox search error:", error);
+    return { torrents: [], error: "Network error searching Torbox" };
 }
 ```
 
@@ -341,21 +339,21 @@ try {
 // Generate manifest
 function getManifest(images) {
 return {
-id: ‘com.f1catchup.addon’,
-version: ‘0.2.0’,
-name: ‘F1 Catchup’,
-description: ‘Formula 1 sessions with Torbox - Includes sprint weekends’,
+id: “com.f1catchup.addon”,
+version: “0.2.0”,
+name: “F1 Catchup”,
+description: “Formula 1 sessions with Torbox - Includes sprint weekends”,
 logo: images.logo,
 background: images.background,
-resources: [‘catalog’, ‘meta’, ‘stream’],
-types: [‘series’],
+resources: [“catalog”, “meta”, “stream”],
+types: [“series”],
 catalogs: [{
-type: ‘series’,
-id: ‘f1-catchup-catalog’,
-name: ‘F1 Catchup’,
-extra: [{ name: ‘skip’, isRequired: false }]
+type: “series”,
+id: “f1-catchup-catalog”,
+name: “F1 Catchup”,
+extra: [{ name: “skip”, isRequired: false }]
 }],
-idPrefixes: [‘f1catchup:’]
+idPrefixes: [“f1catchup:”]
 };
 }
 
@@ -365,30 +363,30 @@ const seasons = await getSeasons(ctx);
 
 ```
 const metas = seasons.map(year => ({
-    id: `f1catchup:season:${year}`,
-    type: 'series',
-    name: `Season ${year}`,
+    id: "f1catchup:season:" + year,
+    type: "series",
+    name: "Season " + year,
     poster: images.poster,
     background: images.background,
-    description: `Formula 1 ${year} World Championship\nAll practice sessions, qualifying, and races`,
-    releaseInfo: `${year}`,
-    genres: ['Motorsport', 'Racing', 'Formula 1'],
+    description: "Formula 1 " + year + " World Championship\nAll practice sessions, qualifying, and races",
+    releaseInfo: "" + year,
+    genres: ["Motorsport", "Racing", "Formula 1"],
     logo: images.logo
 }));
 
-return { metas };
+return { metas: metas };
 ```
 
 }
 
 // Handle meta request
 async function handleMeta(id, ctx, images) {
-if (!id.startsWith(‘f1catchup:season:’)) {
+if (!id.startsWith(“f1catchup:season:”)) {
 return { meta: null };
 }
 
 ```
-const year = parseInt(id.split(':')[2]);
+const year = parseInt(id.split(":")[2]);
 const races = await getCalendar(year, ctx);
 
 if (!races.length) {
@@ -396,7 +394,7 @@ if (!races.length) {
 }
 
 const videos = [];
-let episodeCounter = 1;
+var episodeCounter = 1;
 
 // Sort races by round first
 races.sort((a, b) => a.round - b.round);
@@ -408,12 +406,12 @@ races.forEach(race => {
     if (race.isTesting && race.testingSessions) {
         race.testingSessions.forEach((session, sessionIndex) => {
             videos.push({
-                id: `f1catchup:${year}:0:${session.id}`,
-                title: `${year} ${race.location} ${session.name}`,
+                id: "f1catchup:" + year + ":0:" + session.id,
+                title: year + " " + race.location + " " + session.name,
                 season: 1,
                 episode: 0,
                 released: formatReleaseDate(session.date, session.time, year),
-                overview: `Pre-Season Testing`,
+                overview: "Pre-Season Testing",
                 thumbnail: getFlagUrl(countryName)
             });
         });
@@ -422,16 +420,16 @@ races.forEach(race => {
     
     // Normal race weekend
     const sessions = getSessionsForRace(race);
-    const location = race.location || race.country || 'Unknown';
+    const location = race.location || race.country || "Unknown";
     
     sessions.forEach((session) => {
         videos.push({
-            id: `f1catchup:${year}:${race.round}:${session.id}`,
-            title: `${year} ${location} ${session.name}`,
+            id: "f1catchup:" + year + ":" + race.round + ":" + session.id,
+            title: year + " " + location + " " + session.name,
             season: 1,
             episode: episodeCounter,
             released: formatReleaseDate(session.date, session.time, year),
-            overview: `Round ${race.round} - ${race.name}`,
+            overview: "Round " + race.round + " - " + race.name,
             thumbnail: getFlagUrl(countryName)
         });
         episodeCounter++;
@@ -443,16 +441,16 @@ videos.sort((a, b) => a.episode - b.episode);
 
 return {
     meta: {
-        id,
-        type: 'series',
-        name: `Season ${year}`,
+        id: id,
+        type: "series",
+        name: "Season " + year,
         poster: images.poster,
         background: images.background,
-        description: `Formula 1 ${year} World Championship\nAll practice sessions, qualifying, and races`,
-        releaseInfo: `${year}`,
-        genres: ['Motorsport', 'Racing', 'Formula 1'],
+        description: "Formula 1 " + year + " World Championship\nAll practice sessions, qualifying, and races",
+        releaseInfo: "" + year,
+        genres: ["Motorsport", "Racing", "Formula 1"],
         logo: images.logo,
-        videos
+        videos: videos
     }
 };
 ```
@@ -461,12 +459,12 @@ return {
 
 // Handle stream request
 async function handleStream(id, apiKey, ctx) {
-if (!id.startsWith(‘f1catchup:’)) {
+if (!id.startsWith(“f1catchup:”)) {
 return { streams: [] };
 }
 
 ```
-const parts = id.split(':');
+const parts = id.split(":");
 const year = parts[1];
 const round = parseInt(parts[2]);
 const session = parts[3];
@@ -482,15 +480,15 @@ const sessionDef = ALL_SESSION_DEFS.find(d => d.id === session);
 const sessionName = sessionDef ? sessionDef.searchTerm : session;
 const sessionDisplayName = sessionDef ? sessionDef.name : session;
 
-const paddedRound = String(round).padStart(2, '0');
-const raceName = race.name.replace(' Grand Prix', '').replace(' Prix', '');
+const paddedRound = String(round).padStart(2, "0");
+const raceName = race.name.replace(" Grand Prix", "").replace(" Prix", "");
 
 const searchQueries = [
-    `Formula 1 ${year} Round ${paddedRound} ${race.location} ${sessionName}`,
-    `Formula 1 ${year}x${paddedRound} ${sessionName}`,
-    `F1 ${year} R${paddedRound} ${sessionName}`,
-    `Formula 1 ${year} Round ${paddedRound} ${race.location}`,
-    `Formula 1 ${year} ${raceName} ${sessionName}`,
+    "Formula 1 " + year + " Round " + paddedRound + " " + race.location + " " + sessionName,
+    "Formula 1 " + year + "x" + paddedRound + " " + sessionName,
+    "F1 " + year + " R" + paddedRound + " " + sessionName,
+    "Formula 1 " + year + " Round " + paddedRound + " " + race.location,
+    "Formula 1 " + year + " " + raceName + " " + sessionName,
 ];
 
 const searchPromises = searchQueries.map(query => searchTorbox(query, apiKey));
@@ -498,13 +496,13 @@ const searchResults = await Promise.allSettled(searchPromises);
 
 const streams = [];
 const seenHashes = new Set();
-let apiKeyError = false;
+var apiKeyError = false;
 
 for (const result of searchResults) {
-    if (result.status !== 'fulfilled') continue;
+    if (result.status !== "fulfilled") continue;
     const { torrents, error } = result.value;
 
-    if (error === 'invalid_api_key') {
+    if (error === "invalid_api_key") {
         apiKeyError = true;
         break;
     }
@@ -514,20 +512,20 @@ for (const result of searchResults) {
         if (hash && seenHashes.has(hash)) continue;
         if (hash) seenHashes.add(hash);
 
-        const name = torrent.raw_title || torrent.name || 'Unknown';
+        const name = torrent.raw_title || torrent.name || "Unknown";
         const size = torrent.size
-            ? `${(torrent.size / 1024 / 1024 / 1024).toFixed(2)} GB`
-            : '';
+            ? (torrent.size / 1024 / 1024 / 1024).toFixed(2) + " GB"
+            : "";
         const seeds = torrent.seeders || 0;
-        const seedsDisplay = seeds ? `Seeds: ${seeds}` : '';
+        const seedsDisplay = seeds ? "Seeds: " + seeds : "";
 
         if (torrent.magnet || torrent.hash) {
             streams.push({
-                name: 'Torbox',
-                title: `${name}\n${[size, seedsDisplay].filter(Boolean).join(' | ')}`,
+                name: "Torbox",
+                title: name + "\n" + [size, seedsDisplay].filter(Boolean).join(" | "),
                 infoHash: torrent.hash,
-                sources: torrent.hash ? [`dht:${torrent.hash}`] : undefined,
-                behaviorHints: { bingeGroup: `f1-${year}-${round}` },
+                sources: torrent.hash ? ["dht:" + torrent.hash] : undefined,
+                behaviorHints: { bingeGroup: "f1-" + year + "-" + round },
                 _seeders: seeds
             });
         }
@@ -541,9 +539,9 @@ for (const result of searchResults) {
 if (apiKeyError) {
     return {
         streams: [{
-            name: 'F1 Catchup',
-            title: 'Invalid Torbox API key.\nPlease reinstall the addon with a valid key.',
-            externalUrl: 'https://torbox.app/settings'
+            name: "F1 Catchup",
+            title: "Invalid Torbox API key.\nPlease reinstall the addon with a valid key.",
+            externalUrl: "https://torbox.app/settings"
         }]
     };
 }
@@ -551,9 +549,9 @@ if (apiKeyError) {
 if (streams.length === 0) {
     return {
         streams: [{
-            name: 'F1 Catchup',
-            title: `No streams found for:\n${race.name} - ${sessionDisplayName}\n\nTry searching on Torbox directly.`,
-            externalUrl: 'https://torbox.app'
+            name: "F1 Catchup",
+            title: "No streams found for:\n" + race.name + " - " + sessionDisplayName + "\n\nTry searching on Torbox directly.",
+            externalUrl: "https://torbox.app"
         }]
     };
 }
@@ -561,46 +559,51 @@ if (streams.length === 0) {
 streams.sort((a, b) => (b._seeders || 0) - (a._seeders || 0));
 
 return {
-    streams: streams.map(({ _seeders, ...rest }) => rest)
+    streams: streams.map(function(s) {
+        const copy = Object.assign({}, s);
+        delete copy._seeders;
+        return copy;
+    })
 };
 ```
 
 }
 
 // JSON response helper
-function jsonResponse(data, status = 200) {
+function jsonResponse(data, status) {
+if (status === undefined) status = 200;
 return new Response(JSON.stringify(data), {
-status,
+status: status,
 headers: {
-‘Content-Type’: ‘application/json’,
-‘Access-Control-Allow-Origin’: ‘*’,
-‘Access-Control-Allow-Methods’: ‘GET, OPTIONS’,
-‘Access-Control-Allow-Headers’: ‘Content-Type’
+“Content-Type”: “application/json”,
+“Access-Control-Allow-Origin”: “*”,
+“Access-Control-Allow-Methods”: “GET, OPTIONS”,
+“Access-Control-Allow-Headers”: “Content-Type”
 }
 });
 }
 
 // Main request handler
 export async function onRequest(ctx) {
-const { request } = ctx;
+const request = ctx.request;
 const url = new URL(request.url);
 const path = url.pathname;
 
 ```
-if (request.method === 'OPTIONS') {
+if (request.method === "OPTIONS") {
     return new Response(null, {
         headers: {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type'
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type"
         }
     });
 }
 
-const pathParts = path.split('/').filter(Boolean);
+const pathParts = path.split("/").filter(Boolean);
 
 if (pathParts.length < 2) {
-    return jsonResponse({ error: 'Invalid path' }, 400);
+    return jsonResponse({ error: "Invalid path" }, 400);
 }
 
 const apiKey = decodeURIComponent(pathParts[0]);
@@ -614,59 +617,59 @@ const images = {
 };
 
 try {
-    if (resource === 'manifest.json') {
+    if (resource === "manifest.json") {
         return jsonResponse(getManifest(images));
     }
 
-    if (resource === 'catalog' && pathParts.length >= 4) {
-        const catalogId = pathParts[3].replace('.json', '');
-        if (catalogId === 'f1-catchup-catalog') {
+    if (resource === "catalog" && pathParts.length >= 4) {
+        const catalogId = pathParts[3].replace(".json", "");
+        if (catalogId === "f1-catchup-catalog") {
             const result = await handleCatalog(ctx, images);
             return jsonResponse(result);
         }
     }
 
-    if (resource === 'meta' && pathParts.length >= 4) {
-        const id = decodeURIComponent(pathParts[3].replace('.json', ''));
+    if (resource === "meta" && pathParts.length >= 4) {
+        const id = decodeURIComponent(pathParts[3].replace(".json", ""));
         const result = await handleMeta(id, ctx, images);
         return jsonResponse(result);
     }
 
-    if (resource === 'stream' && pathParts.length >= 4) {
-        const id = decodeURIComponent(pathParts[3].replace('.json', ''));
+    if (resource === "stream" && pathParts.length >= 4) {
+        const id = decodeURIComponent(pathParts[3].replace(".json", ""));
         const result = await handleStream(id, apiKey, ctx);
         return jsonResponse(result);
     }
 
-    if (resource === 'validate' && apiKey) {
+    if (resource === "validate" && apiKey) {
         try {
-            const response = await fetch('https://api.torbox.app/v1/api/user/me', {
+            const response = await fetch("https://api.torbox.app/v1/api/user/me", {
                 headers: { 
-                    'Authorization': `Bearer ${apiKey}`,
-                    'User-Agent': 'F1CatchupAddon/0.1.0'
+                    "Authorization": "Bearer " + apiKey,
+                    "User-Agent": "F1CatchupAddon/0.1.0"
                 }
             });
             
             if (response.status === 401 || response.status === 403) {
-                return jsonResponse({ error: 'Invalid API key' }, 401);
+                return jsonResponse({ error: "Invalid API key" }, 401);
             }
             
             if (!response.ok) {
-                return jsonResponse({ error: `Torbox API Error: ${response.status}` }, response.status);
+                return jsonResponse({ error: "Torbox API Error: " + response.status }, response.status);
             }
 
             const data = await response.json();
-            return jsonResponse({ success: true, data });
+            return jsonResponse({ success: true, data: data });
         } catch (err) {
-            return jsonResponse({ error: 'Validation failed', details: err.message }, 500);
+            return jsonResponse({ error: "Validation failed", details: err.message }, 500);
         }
     }
 
-    return jsonResponse({ error: 'Not found' }, 404);
+    return jsonResponse({ error: "Not found" }, 404);
 
 } catch (error) {
-    console.error('Error:', error);
-    return jsonResponse({ error: 'Internal server error', message: error.message }, 500);
+    console.error("Error:", error);
+    return jsonResponse({ error: "Internal server error", message: error.message }, 500);
 }
 ```
 
