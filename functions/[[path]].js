@@ -317,7 +317,7 @@ export async function onRequest(ctx) {
     const pathParts = path.split('/').filter(Boolean);
     
     if (pathParts.length < 2) {
-        return jsonResponse({ error: 'Invalid path' }, 400);
+        return next();
     }
     
     const apiKey = decodeURIComponent(pathParts[0]);
