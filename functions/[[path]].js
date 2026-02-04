@@ -128,8 +128,6 @@ async function getSeasons(ctx) {
             .map(s => parseInt(s.season))
             .filter(s => s >= 2000)
             .sort((a, b) => b - a);
-        
-        return seasons;
     } catch (error) {
         console.error('Failed to fetch seasons:', error);
         // Fallback to hardcoded recent seasons
@@ -292,7 +290,7 @@ async function handleMeta(id, ctx, images) {
 }
 
 // Handle stream request
-async function handleStream(id, apiKey) {
+async function handleStream(id, apiKey, ctx) {
     console.log('handleStream called with id:', id);
     
     if (!id.startsWith('f1catchup:')) {
@@ -477,7 +475,7 @@ export async function onRequest(ctx) {
         if (resource === 'stream' && pathParts.length >= 4) {
             const id = decodeURIComponent(pathParts[3].replace('.json', ''));
             console.log('Stream ID:', id);
-            const result = await handleStream(id, apiKey);
+            const result = await handleStream(id, apiKey, ctx);
             return jsonResponse(result);
         }
 
