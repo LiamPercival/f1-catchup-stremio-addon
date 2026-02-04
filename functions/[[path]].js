@@ -286,22 +286,25 @@ async function getCalendar(year, ctx) {
 async function searchTorbox(query, apiKey) {
     if (!apiKey) return { torrents: [], error: "No API key provided" };
 
-    const endpoints = [
-        // Primary text search endpoint (uses 'q=')
-        "https://api.torbox.app/v1/api/search/search?q=" + encodeURIComponent(query),
-        // Voyager Search API (uses token in URL)
-        "https://search-api.torbox.app/search?q=" + encodeURIComponent(query) + "&token=" + apiKey,
-        // Fallback torrent search
-        "https://api.torbox.app/v1/api/torrents/search?q=" + encodeURIComponent(query)
+    // We will try the two most reliable global search endpoints
+    const trials = [
+        {
+            name: "Torbox Global All",
+            url: "https://api.torbox.app/v1/api/search/all?q=" + encodeURIComponent(query),
+            headers: { "Authorization": "Bearer " + apiKey }
+        },
+        {
+            name: "Voyager API",
+            // Voyager often works better without the Authorization header if the token is in the URL
+            url: "https://search-api.torbox.app/search?q=" + encodeURIComponent(query) + "&token=" + apiKey,
+            headers: {} 
+        }
     ];
 
-    for (const url of endpoints) {
+    for (const trial of trials) {
         try {
-            const response = await fetch(url, { 
-                headers: { 
-                    "Authorization": "Bearer " + apiKey,
-                    "User-Agent": "F1CatchupAddon/0.1.0"
-                } 
+            const response = await fetch(trial.url, { 
+                headers: Object.assign({ "User-Agent": "Mozilla/5.0" }, trial.headers) 
             });
 
             if (response.status === 401 || response.status === 403) {
@@ -311,27 +314,28 @@ async function searchTorbox(query, apiKey) {
             if (!response.ok) continue;
 
             const data = await response.json();
-            var torrents = [];
+            let torrents = [];
             
-            if (data && data.data && data.data.torrents) {
-                torrents = data.data.torrents;
-            } else if (data && data.data && Array.isArray(data.data)) {
+            // Flexible parsing for different Torbox response structures
+            if (data.data && Array.isArray(data.data)) {
                 torrents = data.data;
-            } else if (data && data.torrents) {
-                torrents = data.torrents;
+            } else if (data.data && data.data.torrents) {
+                torrents = data.data.torrents;
             } else if (Array.isArray(data)) {
                 torrents = data;
+            } else if (data.torrents) {
+                torrents = data.torrents;
             }
             
             if (torrents.length > 0) {
-                return { torrents: torrents, error: null, endpoint: url };
+                return { torrents: torrents, error: null, endpoint: trial.name };
             }
         } catch (error) {
-            console.error("Torbox search error for " + url + ":", error);
+            console.error("Search error for " + trial.name + ":", error);
         }
     }
     
-    return { torrents: [], error: "No results from any endpoint" };
+    return { torrents: [], error: "No results from any endpoint", endpoint: "none worked" };
 }
 
 // Generate manifest
