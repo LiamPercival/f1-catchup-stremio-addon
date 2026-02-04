@@ -94,7 +94,7 @@ function formatReleaseDate(date, time, fallbackYear) {
 }
 
 // Fetch with caching
-async function fetchWithCache(url, cacheKey, ctx, ttl = 86400) {
+ fetchWithCache(url, cacheKey, ctx, ttl = 86400) {
     try {
         const cache = caches.default;
         const cacheResponse = await cache.match(cacheKey);
@@ -134,7 +134,7 @@ async function fetchWithCache(url, cacheKey, ctx, ttl = 86400) {
 }
 
 // Get seasons
-async function getSeasons(ctx) {
+ getSeasons(ctx) {
     const currentYear = new Date().getFullYear();
     const openF1Years = [];
     for (var y = currentYear; y >= 2023; y--) {
@@ -145,7 +145,7 @@ async function getSeasons(ctx) {
 }
 
 // OpenF1 Calendar
-async function getOpenF1Calendar(year, ctx) {
+ getOpenF1Calendar(year, ctx) {
     try {
         const [meetings, sessions] = await Promise.all([
             fetchWithCache(OPENF1_API + "/meetings?year=" + year, "openf1-meetings-" + year, ctx),
@@ -255,7 +255,7 @@ async function getOpenF1Calendar(year, ctx) {
 }
 
 // Get calendar for a season
-async function getCalendar(year, ctx) {
+ getCalendar(year, ctx) {
     if (year >= 2023) {
         return getOpenF1Calendar(year, ctx);
     }
@@ -291,14 +291,16 @@ async function getCalendar(year, ctx) {
 }
 
 // Search Torbox - using the correct search endpoint
-async function searchTorbox(query, apiKey) {
+ searchTorbox(query, apiKey) {
     if (!apiKey) return { torrents: [], error: "No API key provided" };
 
-    // Try multiple possible endpoints
     const endpoints = [
-        "https://search-api.torbox.app/torrents/" + encodeURIComponent(query) + "?metadata=false&season=0&episode=0",
+        // Updated main text search endpoint
+        "https://api.torbox.app/v1/api/search/search?q=" + encodeURIComponent(query),
+        // Voyager Search API with token in query string
+        "https://search-api.torbox.app/search?q=" + encodeURIComponent(query) + "&token=" + apiKey,
+        // Existing fallbacks
         "https://api.torbox.app/v1/api/search?query=" + encodeURIComponent(query),
-        "https://api.torbox.app/v1/api/torrents/search?query=" + encodeURIComponent(query)
     ];
 
     for (const url of endpoints) {
