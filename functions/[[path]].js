@@ -316,8 +316,9 @@ export async function onRequest(ctx) {
     // Parse path: /:apiKey/resource/type/id.json
     const pathParts = path.split('/').filter(Boolean);
     
+    // Need at least apiKey and resource for API routes
     if (pathParts.length < 2) {
-        return next();
+        return jsonResponse({ error: 'Invalid path' }, 400);
     }
     
     const apiKey = decodeURIComponent(pathParts[0]);
