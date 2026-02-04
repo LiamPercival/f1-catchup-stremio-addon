@@ -296,10 +296,9 @@
             let keyValidated = false;
 
             try {
-                // Validate API key by calling Torbox user endpoint
-                const response = await fetch('https://api.torbox.app/v1/api/user/me', {
-                    headers: { 'Authorization': 'Bearer ' + apiKey }
-                });
+                // Validate API key by calling our own backend validation endpoint
+                const validationUrl = baseUrl + '/' + encodeURIComponent(apiKey) + '/validate';
+                const response = await fetch(validationUrl);
 
                 if (response.status === 401 || response.status === 403) {
                     errorDiv.textContent = 'Invalid API key. Please check your Torbox API key and try again.';
@@ -311,14 +310,14 @@
                 }
 
                 if (!response.ok) {
-                    // Non-auth error, proceed anyway
-                    console.warn('Torbox API returned ' + response.status + ', proceeding with install');
+                    // Non-auth error, proceed anyway but warn
+                    console.warn('Backend validation returned ' + response.status + ', proceeding with install');
                 } else {
                     keyValidated = true;
                 }
             } catch (err) {
-                // CORS or network error — skip validation and proceed
-                console.warn('Could not validate API key (CORS or network):', err);
+                // Network error — skip validation and proceed
+                console.warn('Could not validate API key (Network error):', err);
             }
 
             // Proceed with install

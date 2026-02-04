@@ -89,7 +89,11 @@ async function fetchWithCache(url, cacheKey, ctx, ttl = 86400) {
     }
 
     // Fetch from API
-    const response = await fetch(url);
+    const response = await fetch(url, {
+        headers: {
+            'User-Agent': 'F1CatchupAddon/0.1.0 (https://github.com/yourrepo; contact@example.com)'
+        }
+    });
 
     if (!response.ok) {
         throw new Error(`API returned ${response.status}: ${response.statusText}`);
@@ -141,7 +145,7 @@ async function getCalendar(year, ctx) {
     try {
         const cacheKey = `https://f1catchup-cache/calendar/${year}`;
         const data = await fetchWithCache(
-            `${F1_API}/${year}.json`,
+            `${F1_API}/${year}.json?limit=100`,
             cacheKey,
             ctx
         );
@@ -173,7 +177,12 @@ async function searchTorbox(query, apiKey) {
     try {
         const response = await fetch(
             `${TORBOX_API}/torrents/search?query=${encodeURIComponent(query)}`,
-            { headers: { 'Authorization': `Bearer ${apiKey}` } }
+            { 
+                headers: { 
+                    'Authorization': `Bearer ${apiKey}`,
+                    'User-Agent': 'F1CatchupAddon/0.1.0'
+                } 
+            }
         );
 
         if (response.status === 401 || response.status === 403) {
@@ -477,6 +486,31 @@ export async function onRequest(ctx) {
             console.log('Stream ID:', id);
             const result = await handleStream(id, apiKey, ctx);
             return jsonResponse(result);
+        }
+
+        // Handle validation
+        if (resource === 'validate' && apiKey) {
+            try {
+                const response = await fetch('https://api.torbox.app/v1/api/user/me', {
+                    headers: { 
+                        'Authorization': `Bearer ${apiKey}`,
+                        'User-Agent': 'F1CatchupAddon/0.1.0'
+                    }
+                });
+                
+                if (response.status === 401 || response.status === 403) {
+                    return jsonResponse({ error: 'Invalid API key' }, 401);
+                }
+                
+                if (!response.ok) {
+                    return jsonResponse({ error: `Torbox API Error: ${response.status}` }, response.status);
+                }
+
+                const data = await response.json();
+                return jsonResponse({ success: true, data });
+            } catch (err) {
+                return jsonResponse({ error: 'Validation failed', details: err.message }, 500);
+            }
         }
 
         return jsonResponse({ error: 'Not found' }, 404);
