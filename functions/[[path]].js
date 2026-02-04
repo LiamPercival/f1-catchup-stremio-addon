@@ -1,5 +1,5 @@
 // F1 Catchup - Cloudflare Pages Function
-// Fixed version - corrected date format and video ordering
+// Corrected version with fixed search endpoints and syntax
 
 const F1_API = "https://api.jolpi.ca/ergast/f1";
 const OPENF1_API = "https://api.openf1.org/v1";
@@ -78,15 +78,10 @@ function formatReleaseDate(date, time, fallbackYear) {
     }
     
     if (time) {
-        // Remove trailing Z if present
         var cleanTime = time.replace(/Z$/, "");
-        
-        // If time already has timezone offset, use as-is
         if (cleanTime.match(/[+-]\d{2}:\d{2}$/)) {
             return date + "T" + cleanTime;
         }
-        
-        // Otherwise add Z for UTC
         return date + "T" + cleanTime + "Z";
     }
     
@@ -94,7 +89,7 @@ function formatReleaseDate(date, time, fallbackYear) {
 }
 
 // Fetch with caching
- fetchWithCache(url, cacheKey, ctx, ttl = 86400) {
+async function fetchWithCache(url, cacheKey, ctx, ttl = 86400) {
     try {
         const cache = caches.default;
         const cacheResponse = await cache.match(cacheKey);
@@ -134,7 +129,7 @@ function formatReleaseDate(date, time, fallbackYear) {
 }
 
 // Get seasons
- getSeasons(ctx) {
+async function getSeasons(ctx) {
     const currentYear = new Date().getFullYear();
     const openF1Years = [];
     for (var y = currentYear; y >= 2023; y--) {
@@ -145,7 +140,7 @@ function formatReleaseDate(date, time, fallbackYear) {
 }
 
 // OpenF1 Calendar
- getOpenF1Calendar(year, ctx) {
+async function getOpenF1Calendar(year, ctx) {
     try {
         const [meetings, sessions] = await Promise.all([
             fetchWithCache(OPENF1_API + "/meetings?year=" + year, "openf1-meetings-" + year, ctx),
@@ -168,7 +163,6 @@ function formatReleaseDate(date, time, fallbackYear) {
 
         const results = [];
         
-        // Testing events as Round 0
         testingEvents.forEach((meeting, testIndex) => {
             const meetingSessions = sessions.filter(s => s.meeting_key === meeting.meeting_key);
             meetingSessions.sort((a, b) => new Date(a.date_start) - new Date(b.date_start));
@@ -205,7 +199,6 @@ function formatReleaseDate(date, time, fallbackYear) {
             });
         });
 
-        // Race weekends
         raceWeekends.forEach((meeting, index) => {
             const meetingSessions = sessions.filter(s => s.meeting_key === meeting.meeting_key);
             const raceSession = meetingSessions.find(s => s.session_name === "Race") || {};
@@ -247,7 +240,6 @@ function formatReleaseDate(date, time, fallbackYear) {
         });
 
         return results;
-
     } catch (e) {
         console.error("OpenF1 fetch error for " + year + ":", e);
         return [];
@@ -255,7 +247,7 @@ function formatReleaseDate(date, time, fallbackYear) {
 }
 
 // Get calendar for a season
- getCalendar(year, ctx) {
+async function getCalendar(year, ctx) {
     if (year >= 2023) {
         return getOpenF1Calendar(year, ctx);
     }
@@ -290,17 +282,17 @@ function formatReleaseDate(date, time, fallbackYear) {
     }
 }
 
-// Search Torbox - using the correct search endpoint
- searchTorbox(query, apiKey) {
+// Search Torbox - Updated with corrected endpoints and q= parameter
+async function searchTorbox(query, apiKey) {
     if (!apiKey) return { torrents: [], error: "No API key provided" };
 
     const endpoints = [
-        // Updated main text search endpoint
+        // Primary text search endpoint (uses 'q=')
         "https://api.torbox.app/v1/api/search/search?q=" + encodeURIComponent(query),
-        // Voyager Search API with token in query string
+        // Voyager Search API (uses token in URL)
         "https://search-api.torbox.app/search?q=" + encodeURIComponent(query) + "&token=" + apiKey,
-        // Existing fallbacks
-        "https://api.torbox.app/v1/api/search?query=" + encodeURIComponent(query),
+        // Fallback torrent search
+        "https://api.torbox.app/v1/api/torrents/search?q=" + encodeURIComponent(query)
     ];
 
     for (const url of endpoints) {
@@ -316,14 +308,11 @@ function formatReleaseDate(date, time, fallbackYear) {
                 return { torrents: [], error: "invalid_api_key" };
             }
 
-            if (!response.ok) {
-                continue; // Try next endpoint
-            }
+            if (!response.ok) continue;
 
             const data = await response.json();
-            
-            // Handle different response formats
             var torrents = [];
+            
             if (data && data.data && data.data.torrents) {
                 torrents = data.data.torrents;
             } else if (data && data.data && Array.isArray(data.data)) {
@@ -369,7 +358,6 @@ function getManifest(images) {
 // Handle catalog request
 async function handleCatalog(ctx, images) {
     const seasons = await getSeasons(ctx);
-
     const metas = seasons.map(year => ({
         id: "f1catchup:season:" + year,
         type: "series",
@@ -381,35 +369,25 @@ async function handleCatalog(ctx, images) {
         genres: ["Motorsport", "Racing", "Formula 1"],
         logo: images.logo
     }));
-
     return { metas: metas };
 }
 
 // Handle meta request
 async function handleMeta(id, ctx, images) {
-    if (!id.startsWith("f1catchup:season:")) {
-        return { meta: null };
-    }
+    if (!id.startsWith("f1catchup:season:")) return { meta: null };
 
     const year = parseInt(id.split(":")[2]);
     const races = await getCalendar(year, ctx);
-
-    if (!races.length) {
-        return { meta: null };
-    }
+    if (!races.length) return { meta: null };
 
     const videos = [];
     var episodeCounter = 1;
-
-    // Sort races by round first
     races.sort((a, b) => a.round - b.round);
 
     races.forEach(race => {
         const countryName = race.country || race.location;
-        
-        // Handle pre-season testing (Round 0)
         if (race.isTesting && race.testingSessions) {
-            race.testingSessions.forEach((session, sessionIndex) => {
+            race.testingSessions.forEach((session) => {
                 videos.push({
                     id: "f1catchup:" + year + ":0:" + session.id,
                     title: year + " " + race.location + " " + session.name,
@@ -423,10 +401,8 @@ async function handleMeta(id, ctx, images) {
             return;
         }
         
-        // Normal race weekend
         const sessions = getSessionsForRace(race);
         const location = race.location || race.country || "Unknown";
-        
         sessions.forEach((session) => {
             videos.push({
                 id: "f1catchup:" + year + ":" + race.round + ":" + session.id,
@@ -441,9 +417,7 @@ async function handleMeta(id, ctx, images) {
         });
     });
 
-    // Sort by episode number ascending (1, 2, 3...) - Stremio expects this order
     videos.sort((a, b) => a.episode - b.episode);
-
     return {
         meta: {
             id: id,
@@ -462,9 +436,7 @@ async function handleMeta(id, ctx, images) {
 
 // Handle stream request
 async function handleStream(id, apiKey, ctx) {
-    if (!id.startsWith("f1catchup:")) {
-        return { streams: [] };
-    }
+    if (!id.startsWith("f1catchup:")) return { streams: [] };
 
     const parts = id.split(":");
     const year = parts[1];
@@ -473,15 +445,11 @@ async function handleStream(id, apiKey, ctx) {
 
     const races = await getCalendar(year, ctx);
     const race = races.find(r => r.round === round);
-
-    if (!race) {
-        return { streams: [] };
-    }
+    if (!race) return { streams: [] };
 
     const sessionDef = ALL_SESSION_DEFS.find(d => d.id === session);
     const sessionName = sessionDef ? sessionDef.searchTerm : session;
     const sessionDisplayName = sessionDef ? sessionDef.name : session;
-
     const paddedRound = String(round).padStart(2, "0");
     const raceName = race.name.replace(" Grand Prix", "").replace(" Prix", "");
 
@@ -495,7 +463,6 @@ async function handleStream(id, apiKey, ctx) {
 
     const searchPromises = searchQueries.map(query => searchTorbox(query, apiKey));
     const searchResults = await Promise.allSettled(searchPromises);
-
     const streams = [];
     const seenHashes = new Set();
     var apiKeyError = false;
@@ -503,11 +470,7 @@ async function handleStream(id, apiKey, ctx) {
     for (const result of searchResults) {
         if (result.status !== "fulfilled") continue;
         const { torrents, error } = result.value;
-
-        if (error === "invalid_api_key") {
-            apiKeyError = true;
-            break;
-        }
+        if (error === "invalid_api_key") { apiKeyError = true; break; }
 
         for (const torrent of torrents) {
             const hash = torrent.hash || torrent.id;
@@ -515,63 +478,37 @@ async function handleStream(id, apiKey, ctx) {
             if (hash) seenHashes.add(hash);
 
             const name = torrent.raw_title || torrent.name || "Unknown";
-            const size = torrent.size
-                ? (torrent.size / 1024 / 1024 / 1024).toFixed(2) + " GB"
-                : "";
+            const size = torrent.size ? (torrent.size / 1024 / 1024 / 1024).toFixed(2) + " GB" : "";
             const seeds = torrent.seeders || 0;
-            const seedsDisplay = seeds ? "Seeds: " + seeds : "";
 
             if (torrent.magnet || torrent.hash) {
                 streams.push({
                     name: "Torbox",
-                    title: name + "\n" + [size, seedsDisplay].filter(Boolean).join(" | "),
+                    title: name + "\n" + [size, seeds ? "Seeds: " + seeds : ""].filter(Boolean).join(" | "),
                     infoHash: torrent.hash,
                     sources: torrent.hash ? ["dht:" + torrent.hash] : undefined,
                     behaviorHints: { bingeGroup: "f1-" + year + "-" + round },
                     _seeders: seeds
                 });
             }
-
             if (streams.length >= 15) break;
         }
-
         if (streams.length >= 15) break;
     }
 
     if (apiKeyError) {
-        return {
-            streams: [{
-                name: "F1 Catchup",
-                title: "Invalid Torbox API key.\nPlease reinstall the addon with a valid key.",
-                externalUrl: "https://torbox.app/settings"
-            }]
-        };
+        return { streams: [{ name: "F1 Catchup", title: "Invalid Torbox API key.", externalUrl: "https://torbox.app/settings" }] };
     }
-
     if (streams.length === 0) {
-        return {
-            streams: [{
-                name: "F1 Catchup",
-                title: "No streams found for:\n" + race.name + " - " + sessionDisplayName + "\n\nTry searching on Torbox directly.",
-                externalUrl: "https://torbox.app"
-            }]
-        };
+        return { streams: [{ name: "F1 Catchup", title: "No streams found for:\n" + race.name + " - " + sessionDisplayName, externalUrl: "https://torbox.app" }] };
     }
 
     streams.sort((a, b) => (b._seeders || 0) - (a._seeders || 0));
-
-    return {
-        streams: streams.map(function(s) {
-            const copy = Object.assign({}, s);
-            delete copy._seeders;
-            return copy;
-        })
-    };
+    return { streams: streams.map(s => { const copy = Object.assign({}, s); delete copy._seeders; return copy; }) };
 }
 
 // JSON response helper
-function jsonResponse(data, status) {
-    if (status === undefined) status = 200;
+function jsonResponse(data, status = 200) {
     return new Response(JSON.stringify(data), {
         status: status,
         headers: {
@@ -590,100 +527,46 @@ export async function onRequest(ctx) {
     const path = url.pathname;
 
     if (request.method === "OPTIONS") {
-        return new Response(null, {
-            headers: {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type"
-            }
-        });
+        return new Response(null, { headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" } });
     }
 
     const pathParts = path.split("/").filter(Boolean);
-
-    if (pathParts.length < 2) {
-        return jsonResponse({ error: "Invalid path" }, 400);
-    }
+    if (pathParts.length < 2) return jsonResponse({ error: "Invalid path" }, 400);
 
     const apiKey = decodeURIComponent(pathParts[0]);
     const resource = pathParts[1];
-
     const origin = url.origin;
-    const images = {
-        poster: origin + IMAGE_POSTER_PATH,
-        logo: origin + IMAGE_LOGO_PATH,
-        background: origin + IMAGE_BG_PATH
-    };
+    const images = { poster: origin + IMAGE_POSTER_PATH, logo: origin + IMAGE_LOGO_PATH, background: origin + IMAGE_BG_PATH };
 
     try {
-        if (resource === "manifest.json") {
-            return jsonResponse(getManifest(images));
-        }
-
+        if (resource === "manifest.json") return jsonResponse(getManifest(images));
         if (resource === "catalog" && pathParts.length >= 4) {
-            const catalogId = pathParts[3].replace(".json", "");
-            if (catalogId === "f1-catchup-catalog") {
-                const result = await handleCatalog(ctx, images);
-                return jsonResponse(result);
-            }
+            if (pathParts[3].replace(".json", "") === "f1-catchup-catalog") return jsonResponse(await handleCatalog(ctx, images));
         }
-
-        if (resource === "meta" && pathParts.length >= 4) {
-            const id = decodeURIComponent(pathParts[3].replace(".json", ""));
-            const result = await handleMeta(id, ctx, images);
-            return jsonResponse(result);
-        }
-
-        if (resource === "stream" && pathParts.length >= 4) {
-            const id = decodeURIComponent(pathParts[3].replace(".json", ""));
-            const result = await handleStream(id, apiKey, ctx);
-            return jsonResponse(result);
-        }
-
-        // Debug endpoint to test Torbox search
+        if (resource === "meta" && pathParts.length >= 4) return jsonResponse(await handleMeta(decodeURIComponent(pathParts[3].replace(".json", "")), ctx, images));
+        if (resource === "stream" && pathParts.length >= 4) return jsonResponse(await handleStream(decodeURIComponent(pathParts[3].replace(".json", "")), apiKey, ctx));
+        
         if (resource === "debug") {
-            var query = pathParts[2] || "F1 2024";
-            query = decodeURIComponent(query);
-            var result = await searchTorbox(query, apiKey);
+            const query = decodeURIComponent(pathParts[2] || "F1 2024");
+            const result = await searchTorbox(query, apiKey);
             return jsonResponse({
                 query: query,
                 torrentCount: result.torrents.length,
                 error: result.error,
                 endpoint: result.endpoint || "none worked",
-                firstFew: result.torrents.slice(0, 5).map(function(t) {
-                    return { name: t.raw_title || t.name || t.title, seeders: t.seeders, hash: t.hash };
-                })
+                firstFew: result.torrents.slice(0, 5).map(t => ({ name: t.raw_title || t.name || t.title, seeders: t.seeders, hash: t.hash }))
             });
         }
 
         if (resource === "validate" && apiKey) {
-            try {
-                const response = await fetch("https://api.torbox.app/v1/api/user/me", {
-                    headers: { 
-                        "Authorization": "Bearer " + apiKey,
-                        "User-Agent": "F1CatchupAddon/0.1.0"
-                    }
-                });
-                
-                if (response.status === 401 || response.status === 403) {
-                    return jsonResponse({ error: "Invalid API key" }, 401);
-                }
-                
-                if (!response.ok) {
-                    return jsonResponse({ error: "Torbox API Error: " + response.status }, response.status);
-                }
-
-                const data = await response.json();
-                return jsonResponse({ success: true, data: data });
-            } catch (err) {
-                return jsonResponse({ error: "Validation failed", details: err.message }, 500);
-            }
+            const response = await fetch("https://api.torbox.app/v1/api/user/me", { headers: { "Authorization": "Bearer " + apiKey, "User-Agent": "F1CatchupAddon/0.1.0" } });
+            if (response.status === 401 || response.status === 403) return jsonResponse({ error: "Invalid API key" }, 401);
+            if (!response.ok) return jsonResponse({ error: "Torbox API Error" }, response.status);
+            return jsonResponse({ success: true, data: await response.json() });
         }
 
         return jsonResponse({ error: "Not found" }, 404);
-
     } catch (error) {
-        console.error("Error:", error);
         return jsonResponse({ error: "Internal server error", message: error.message }, 500);
     }
 }
