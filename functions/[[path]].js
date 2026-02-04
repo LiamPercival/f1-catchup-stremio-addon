@@ -13,7 +13,7 @@ const COUNTRY_FLAGS = {
     'uk': 'gb', 'great britain': 'gb', 'united kingdom': 'gb',
     'belgium': 'be', 'hungary': 'hu',
     'netherlands': 'nl', 'azerbaijan': 'az', 'singapore': 'sg', 'mexico': 'mx',
-    'brazil': 'br', 'qatar': 'qa', 'uae': 'ae', 'abu dhabi': 'ae',
+    'brazil': 'br', 'qatar': 'qa', 'uae': 'ae', 'abu dhabi': 'ae', 'united arab emirates': 'ae',
     'portugal': 'pt', 'turkey': 'tr', 'turkiye': 'tr',
     'russia': 'ru', 'germany': 'de',
     'france': 'fr', 'malaysia': 'my', 'korea': 'kr', 'south korea': 'kr',
@@ -146,10 +146,64 @@ async function getOpenF1Calendar(year, ctx) {
 
         if (!meetings || !sessions) return [];
 
-        // Sort meetings by date
+        // Sort all meetings by date
         meetings.sort((a, b) => new Date(a.date_start) - new Date(b.date_start));
 
-        return meetings.map((meeting, index) => {
+        // Separate testing events and race weekends
+        const testingEvents = meetings.filter(m => {
+            const name = m.meeting_name.toLowerCase();
+            return name.includes('testing') || name.includes('test');
+        });
+        
+        const raceWeekends = meetings.filter(m => {
+            const name = m.meeting_name.toLowerCase();
+            return !name.includes('testing') && !name.includes('test');
+        });
+
+        const results = [];
+        
+        // Process testing events as Round 0 (or multiple if there are several)
+        testingEvents.forEach((meeting, testIndex) => {
+            const meetingSessions = sessions.filter(s => s.meeting_key === meeting.meeting_key);
+            
+            // Sort testing sessions by date
+            meetingSessions.sort((a, b) => new Date(a.date_start) - new Date(b.date_start));
+            
+            // Build testing sessions - typically Day 1, Day 2, Day 3
+            const testingSessions = [];
+            meetingSessions.forEach((s, idx) => {
+                const start = new Date(s.date_start);
+                const dateStr = start.toISOString().split('T')[0];
+                const timeStr = start.toISOString().split('T')[1].replace('Z', '+00:00');
+                
+                testingSessions.push({
+                    id: `test${idx + 1}`,
+                    name: s.session_name, // "Day 1", "Day 2", "Day 3"
+                    searchTerm: `Testing ${s.session_name}`,
+                    date: dateStr,
+                    time: timeStr
+                });
+            });
+            
+            const firstSession = meetingSessions[0];
+            const startDate = firstSession ? new Date(firstSession.date_start) : new Date(meeting.date_start);
+            
+            results.push({
+                round: 0, // Testing is Round 0
+                isTesting: true,
+                name: meeting.meeting_name,
+                circuit: meeting.circuit_short_name,
+                location: meeting.location,
+                country: meeting.country_name || meeting.location,
+                countryFlag: meeting.country_flag,
+                date: startDate.toISOString().split('T')[0],
+                time: startDate.toISOString().split('T')[1].replace('Z', '+00:00'),
+                testingSessions: testingSessions
+            });
+        });
+
+        // Process race weekends as Round 1, 2, 3, etc.
+        raceWeekends.forEach((meeting, index) => {
             const meetingSessions = sessions.filter(s => s.meeting_key === meeting.meeting_key);
             
             // Find Race session for main date
@@ -160,7 +214,7 @@ async function getOpenF1Calendar(year, ctx) {
             meetingSessions.forEach(s => {
                 const start = new Date(s.date_start);
                 const dateStr = start.toISOString().split('T')[0];
-                const timeStr = start.toISOString().split('T')[1].replace('Z', '+00:00'); // Ergast format roughly
+                const timeStr = start.toISOString().split('T')[1].replace('Z', '+00:00');
 
                 // Mapping OpenF1 names to our internal ID structure
                 let type = null;
@@ -181,16 +235,20 @@ async function getOpenF1Calendar(year, ctx) {
             // Fallback for race date if missing (rare)
             const raceDateStart = raceSession.date_start ? new Date(raceSession.date_start) : new Date(meeting.date_start);
             
-            return {
+            results.push({
                 round: index + 1,
                 name: meeting.meeting_name,
                 circuit: meeting.circuit_short_name,
                 location: meeting.location,
+                country: meeting.country_name || meeting.location,
+                countryFlag: meeting.country_flag,
                 date: raceDateStart.toISOString().split('T')[0],
                 time: raceDateStart.toISOString().split('T')[1].replace('Z', '+00:00'),
                 ...sessionMap
-            };
+            });
         });
+
+        return results;
 
     } catch (e) {
         console.error(`OpenF1 fetch error for ${year}:`, e);
@@ -308,6 +366,15 @@ async function handleCatalog(ctx, images) {
     return { metas };
 }
 
+// Convert country code to flag emoji
+function getCountryFlagEmoji(country) {
+    const normalized = country.toLowerCase().trim();
+    const code = COUNTRY_FLAGS[normalized] || 'un';
+    // Convert 2-letter country code to flag emoji (regional indicator symbols)
+    const codePoints = code.toUpperCase().split('').map(char => 127397 + char.charCodeAt(0));
+    return String.fromCodePoint(...codePoints);
+}
+
 // Handle meta request
 async function handleMeta(id, ctx, images) {
     if (!id.startsWith('f1catchup:season:')) {
@@ -324,23 +391,53 @@ async function handleMeta(id, ctx, images) {
     }
 
     const videos = [];
-    let episodeNumber = 0;
+    const SESSIONS_PER_ROUND = 5;
 
     races.forEach(race => {
+        const countryName = race.country || race.location;
+        const flagEmoji = getCountryFlagEmoji(countryName);
+        
+        // Handle pre-season testing (Round 0) differently
+        if (race.isTesting && race.testingSessions) {
+            race.testingSessions.forEach((session, sessionIndex) => {
+                // Use T1, T2, T3 for testing episodes (before Round 1)
+                const episodeLabel = `T${sessionIndex + 1}`;
+                videos.push({
+                    id: `f1catchup:${year}:0:${session.id}`,
+                    title: `${episodeLabel} - ${session.name} ${flagEmoji}`,
+                    name: `${session.name}`,
+                    season: 1,
+                    episode: -(race.testingSessions.length - sessionIndex), // Negative to sort before ep 1
+                    released: session.date
+                        ? `${session.date}T${session.time || '00:00:00'}Z`
+                        : `${year}-01-01T00:00:00.000Z`,
+                    overview: `Pre-Season Testing - ${race.location}, ${countryName}`,
+                    thumbnail: getFlagUrl(countryName)
+                });
+            });
+            return; // Skip normal session processing for testing
+        }
+        
+        // Normal race weekend processing
         const sessions = getSessionsForRace(race);
-        sessions.forEach(session => {
-            episodeNumber++;
+        
+        // Calculate base episode number for this round
+        // Round 1 starts at episode 1, Round 2 at episode 6, etc.
+        const baseEpisode = (race.round - 1) * SESSIONS_PER_ROUND;
+        
+        sessions.forEach((session, sessionIndex) => {
+            const episodeNumber = baseEpisode + sessionIndex + 1;
             videos.push({
                 id: `f1catchup:${year}:${race.round}:${session.id}`,
-                title: `${race.name} - ${session.name}`,
-                name: `${race.name} - ${session.name}`,
+                title: `${episodeNumber} - ${session.name} ${flagEmoji}`,
+                name: `${session.name}`,
                 season: 1,
                 episode: episodeNumber,
                 released: session.date
                     ? `${session.date}T${session.time || '00:00:00'}Z`
                     : `${year}-01-01T00:00:00.000Z`,
                 overview: `Round ${race.round} - ${race.name}`,
-                thumbnail: getFlagUrl(race.location)
+                thumbnail: getFlagUrl(countryName)
             });
         });
     });
