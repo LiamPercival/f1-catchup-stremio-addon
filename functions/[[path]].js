@@ -616,6 +616,21 @@ export async function onRequest(ctx) {
             return jsonResponse(result);
         }
 
+        // Debug endpoint to test Torbox search
+        if (resource === "debug") {
+            var query = pathParts[2] || "F1 2024";
+            query = decodeURIComponent(query);
+            var result = await searchTorbox(query, apiKey);
+            return jsonResponse({
+                query: query,
+                torrentCount: result.torrents.length,
+                error: result.error,
+                firstFew: result.torrents.slice(0, 5).map(function(t) {
+                    return { name: t.raw_title || t.name, seeders: t.seeders };
+                })
+            });
+        }
+
         if (resource === "validate" && apiKey) {
             try {
                 const response = await fetch("https://api.torbox.app/v1/api/user/me", {
