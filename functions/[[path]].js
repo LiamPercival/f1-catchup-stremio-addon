@@ -1,5 +1,5 @@
 // F1 Catchup - Cloudflare Pages Function
-// Handles all Stremio addon routes
+// Simplified version with better error handling
 
 const F1_API = 'https://api.jolpi.ca/ergast/f1';
 const TORBOX_API = 'https://api.torbox.app/v1/api';
@@ -34,74 +34,47 @@ const SESSION_SEARCH_TERMS = {
     'grandprix': 'Race'
 };
 
-const SEASON_POSTER = 'https://i.imgur.com/HqfqLVk.png';
-const F1_LOGO = 'https://i.imgur.com/mFVjqpC.png';
-const F1_BACKGROUND = 'https://i.imgur.com/V6jnvXP.jpg';
+const SEASON_POSTER = 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/F1.svg/800px-F1.svg.png';
+const F1_LOGO = 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/F1.svg/800px-F1.svg.png';
+const F1_BACKGROUND = 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/F1.svg/800px-F1.svg.png';
 
-// Fetch with caching
-async function fetchWithCache(url, cacheKey, ctx, ttl = 86400) {
-    const cache = caches.default;
-    
-    // Try cache first
-    const cacheResponse = await cache.match(cacheKey);
-    if (cacheResponse) {
-        return cacheResponse.json();
-    }
-    
-    // Fetch from API
-    const response = await fetch(url);
-    const data = await response.json();
-    
-    // Cache the response
-    const cacheableResponse = new Response(JSON.stringify(data), {
-        headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': `public, max-age=${ttl}`
-        }
-    });
-    ctx.waitUntil(cache.put(cacheKey, cacheableResponse.clone()));
-    
-    return data;
-}
-
-// Get seasons from F1 API
-async function getSeasons(ctx) {
+// Get seasons - simplified with fallback
+async function getSeasons() {
     try {
-        const cacheKey = 'https://f1catchup-cache/seasons';
-        const data = await fetchWithCache(
-            `${F1_API}/seasons.json?limit=100`,
-            cacheKey,
-            ctx
-        );
+        const response = await fetch(`${F1_API}/seasons.json?limit=100`);
+        if (!response.ok) throw new Error(`API returned ${response.status}`);
         
-        return data.MRData.SeasonTable.Seasons
+        const data = await response.json();
+        const seasons = data.MRData.SeasonTable.Seasons
             .map(s => parseInt(s.season))
             .filter(s => s >= 2000)
             .sort((a, b) => b - a);
+        
+        return seasons;
     } catch (error) {
         console.error('Failed to fetch seasons:', error);
+        // Fallback to hardcoded recent seasons
         const currentYear = new Date().getFullYear();
-        return Array.from({ length: 10 }, (_, i) => currentYear - i);
+        return Array.from({ length: 25 }, (_, i) => currentYear - i);
     }
 }
 
-// Get calendar for a season
-async function getCalendar(year, ctx) {
+// Get calendar for a season - simplified with fallback
+async function getCalendar(year) {
     try {
-        const cacheKey = `https://f1catchup-cache/calendar/${year}`;
-        const data = await fetchWithCache(
-            `${F1_API}/${year}.json`,
-            cacheKey,
-            ctx
-        );
+        const response = await fetch(`${F1_API}/${year}.json`);
+        if (!response.ok) throw new Error(`API returned ${response.status}`);
         
-        return data.MRData.RaceTable.Races.map(race => ({
+        const data = await response.json();
+        const races = data.MRData.RaceTable.Races.map(race => ({
             round: parseInt(race.round),
             name: race.raceName,
             circuit: race.Circuit.circuitName,
             location: race.Circuit.Location.country,
             date: race.date
         }));
+        
+        return races;
     } catch (error) {
         console.error(`Failed to fetch ${year} calendar:`, error);
         return [];
@@ -116,6 +89,8 @@ async function searchTorbox(query, apiKey) {
         const response = await fetch(`${TORBOX_API}/torrents/search?query=${encodeURIComponent(query)}`, {
             headers: { 'Authorization': `Bearer ${apiKey}` }
         });
+        
+        if (!response.ok) throw new Error(`Torbox returned ${response.status}`);
         
         const data = await response.json();
         return data?.data?.torrents || [];
@@ -147,8 +122,8 @@ function getManifest() {
 }
 
 // Handle catalog request
-async function handleCatalog(ctx) {
-    const seasons = await getSeasons(ctx);
+async function handleCatalog() {
+    const seasons = await getSeasons();
     
     const metas = seasons.map(year => ({
         id: `f1catchup:season:${year}`,
@@ -156,25 +131,31 @@ async function handleCatalog(ctx) {
         name: `Season ${year}`,
         poster: SEASON_POSTER,
         background: F1_BACKGROUND,
-        description: `Formula 1 ${year} World Championship\nAll practice sessions, qualifying, and races`,
+        description: `Formula 1 ${year} World Championship - All practice sessions, qualifying, and races`,
         releaseInfo: `${year}`,
-        genres: ['Motorsport', 'Racing', 'Formula 1'],
-        logo: F1_LOGO
+        genres: ['Motorsport', 'Racing', 'Formula 1']
     }));
     
     return { metas };
 }
 
 // Handle meta request
-async function handleMeta(id, ctx) {
+async function handleMeta(id) {
+    console.log('handleMeta called with id:', id);
+    
     if (!id.startsWith('f1catchup:season:')) {
+        console.log('ID does not start with f1catchup:season:');
         return { meta: null };
     }
     
     const year = parseInt(id.split(':')[2]);
-    const races = await getCalendar(year, ctx);
+    console.log('Fetching calendar for year:', year);
+    
+    const races = await getCalendar(year);
+    console.log('Got races:', races.length);
     
     if (!races.length) {
+        console.log('No races found for year:', year);
         return { meta: null };
     }
     
@@ -185,7 +166,6 @@ async function handleMeta(id, ctx) {
             videos.push({
                 id: `f1catchup:${year}:${race.round}:${session.toLowerCase().replace(' ', '')}`,
                 title: `${episodeNumber} - ${session}`,
-                name: `${episodeNumber} - ${session}`,
                 season: 1,
                 episode: episodeNumber,
                 released: race.date ? `${race.date}T00:00:00.000Z` : `${year}-01-01T00:00:00.000Z`,
@@ -195,6 +175,8 @@ async function handleMeta(id, ctx) {
         });
     });
     
+    console.log('Generated videos:', videos.length);
+    
     return {
         meta: {
             id,
@@ -202,17 +184,18 @@ async function handleMeta(id, ctx) {
             name: `Season ${year}`,
             poster: SEASON_POSTER,
             background: F1_BACKGROUND,
-            description: `Formula 1 ${year} World Championship\nAll practice sessions, qualifying, and races`,
+            description: `Formula 1 ${year} World Championship - All practice sessions, qualifying, and races`,
             releaseInfo: `${year}`,
             genres: ['Motorsport', 'Racing', 'Formula 1'],
-            logo: F1_LOGO,
             videos
         }
     };
 }
 
 // Handle stream request
-async function handleStream(id, apiKey, ctx) {
+async function handleStream(id, apiKey) {
+    console.log('handleStream called with id:', id);
+    
     if (!id.startsWith('f1catchup:')) {
         return { streams: [] };
     }
@@ -222,7 +205,7 @@ async function handleStream(id, apiKey, ctx) {
     const round = parseInt(parts[2]);
     const session = parts[3];
     
-    const races = await getCalendar(year, ctx);
+    const races = await getCalendar(year);
     const race = races.find(r => r.round === round);
     
     if (!race) {
@@ -243,6 +226,7 @@ async function handleStream(id, apiKey, ctx) {
     const seenHashes = new Set();
     
     for (const query of searchQueries) {
+        console.log('Searching:', query);
         const results = await searchTorbox(query, apiKey);
         
         for (const result of results) {
@@ -302,6 +286,8 @@ export async function onRequest(ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
     
+    console.log('Request path:', path);
+    
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
         return new Response(null, {
@@ -315,6 +301,7 @@ export async function onRequest(ctx) {
     
     // Parse path: /:apiKey/resource/type/id.json
     const pathParts = path.split('/').filter(Boolean);
+    console.log('Path parts:', pathParts);
     
     // Need at least apiKey and resource for API routes
     if (pathParts.length < 2) {
@@ -324,39 +311,44 @@ export async function onRequest(ctx) {
     const apiKey = decodeURIComponent(pathParts[0]);
     const resource = pathParts[1];
     
+    console.log('Resource:', resource);
+    
     try {
         // Handle manifest
         if (resource === 'manifest.json') {
             return jsonResponse(getManifest());
         }
         
-        // Handle catalog
+        // Handle catalog: /:apiKey/catalog/series/f1-catchup-catalog.json
         if (resource === 'catalog' && pathParts.length >= 4) {
             const catalogId = pathParts[3].replace('.json', '');
+            console.log('Catalog ID:', catalogId);
             if (catalogId === 'f1-catchup-catalog') {
-                const result = await handleCatalog(ctx);
+                const result = await handleCatalog();
                 return jsonResponse(result);
             }
         }
         
-        // Handle meta
+        // Handle meta: /:apiKey/meta/series/f1catchup:season:2025.json
         if (resource === 'meta' && pathParts.length >= 4) {
             const id = decodeURIComponent(pathParts[3].replace('.json', ''));
-            const result = await handleMeta(id, ctx);
+            console.log('Meta ID:', id);
+            const result = await handleMeta(id);
             return jsonResponse(result);
         }
         
-        // Handle stream
+        // Handle stream: /:apiKey/stream/series/f1catchup:2025:1:fp1.json
         if (resource === 'stream' && pathParts.length >= 4) {
             const id = decodeURIComponent(pathParts[3].replace('.json', ''));
-            const result = await handleStream(id, apiKey, ctx);
+            console.log('Stream ID:', id);
+            const result = await handleStream(id, apiKey);
             return jsonResponse(result);
         }
         
-        return jsonResponse({ error: 'Not found' }, 404);
+        return jsonResponse({ error: 'Not found', path, pathParts }, 404);
         
     } catch (error) {
         console.error('Error:', error);
-        return jsonResponse({ error: 'Internal server error' }, 500);
+        return jsonResponse({ error: 'Internal server error', message: error.message }, 500);
     }
 }
