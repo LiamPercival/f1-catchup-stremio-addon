@@ -1,6 +1,6 @@
 {
   "name": "f1-catchup-addon",
-  "version": "3.0.0",
+  "version": "0.1.0",
   "description": "Stremio addon for Formula 1 content with Torbox integration",
   "private": true,
   "scripts": {

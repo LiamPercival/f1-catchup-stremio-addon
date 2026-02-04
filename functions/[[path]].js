@@ -9,13 +9,17 @@ const COUNTRY_FLAGS = {
     'australia': 'au', 'china': 'cn', 'japan': 'jp', 'bahrain': 'bh',
     'saudi arabia': 'sa', 'usa': 'us', 'united states': 'us', 'italy': 'it',
     'monaco': 'mc', 'spain': 'es', 'canada': 'ca', 'austria': 'at',
-    'uk': 'gb', 'great britain': 'gb', 'belgium': 'be', 'hungary': 'hu',
+    'uk': 'gb', 'great britain': 'gb', 'united kingdom': 'gb',
+    'belgium': 'be', 'hungary': 'hu',
     'netherlands': 'nl', 'azerbaijan': 'az', 'singapore': 'sg', 'mexico': 'mx',
     'brazil': 'br', 'qatar': 'qa', 'uae': 'ae', 'abu dhabi': 'ae',
-    'portugal': 'pt', 'turkey': 'tr', 'russia': 'ru', 'germany': 'de',
-    'france': 'fr', 'malaysia': 'my', 'korea': 'kr', 'india': 'in',
-    'vietnam': 'vn', 'las vegas': 'us', 'miami': 'us', 'emilia romagna': 'it',
-    'imola': 'it',
+    'portugal': 'pt', 'turkey': 'tr', 'turkiye': 'tr',
+    'russia': 'ru', 'germany': 'de',
+    'france': 'fr', 'malaysia': 'my', 'korea': 'kr', 'south korea': 'kr',
+    'india': 'in', 'vietnam': 'vn',
+    'las vegas': 'us', 'miami': 'us', 'emilia romagna': 'it', 'imola': 'it',
+    'south africa': 'za', 'thailand': 'th', 'argentina': 'ar',
+    'switzerland': 'ch', 'sweden': 'se', 'morocco': 'ma', 'rwanda': 'rw',
 };
 
 const getFlagUrl = (country) => {
@@ -24,43 +28,89 @@ const getFlagUrl = (country) => {
     return `https://flagcdn.com/w320/${code}.png`;
 };
 
-const SESSIONS = ['FP1', 'FP2', 'FP3', 'Qualifying', 'Grand Prix'];
+// Session definitions: maps F1 API fields to display info and search terms
+// Order matters — this is the chronological order within a race weekend
+const SESSION_DEFS = [
+    { apiField: 'FirstPractice',    id: 'fp1',          name: 'FP1',               searchTerm: 'Practice 1' },
+    { apiField: 'SecondPractice',   id: 'fp2',          name: 'FP2',               searchTerm: 'Practice 2' },
+    { apiField: 'ThirdPractice',    id: 'fp3',          name: 'FP3',               searchTerm: 'Practice 3' },
+    { apiField: 'SprintQualifying', id: 'sprintquali',  name: 'Sprint Qualifying', searchTerm: 'Sprint Qualifying' },
+    { apiField: 'Sprint',           id: 'sprint',       name: 'Sprint',            searchTerm: 'Sprint' },
+    { apiField: 'Qualifying',       id: 'qualifying',   name: 'Qualifying',        searchTerm: 'Qualifying' },
+];
 
-const SESSION_SEARCH_TERMS = {
-    'fp1': 'Practice 1',
-    'fp2': 'Practice 2',
-    'fp3': 'Practice 3',
-    'qualifying': 'Qualifying',
-    'grandprix': 'Race'
-};
+// The race itself is always present (uses top-level date/time on the race object)
+const RACE_SESSION = { id: 'grandprix', name: 'Grand Prix', searchTerm: 'Race' };
 
-const SEASON_POSTER = 'https://i.imgur.com/HqfqLVk.png';
-const F1_LOGO = 'https://i.imgur.com/mFVjqpC.png';
-const F1_BACKGROUND = 'https://i.imgur.com/V6jnvXP.jpg';
+// All session definitions including race, for lookups
+const ALL_SESSION_DEFS = [...SESSION_DEFS, RACE_SESSION];
 
-// Fetch with caching
-async function fetchWithCache(url, cacheKey, ctx, ttl = 86400) {
-    const cache = caches.default;
-    
-    // Try cache first
-    const cacheResponse = await cache.match(cacheKey);
-    if (cacheResponse) {
-        return cacheResponse.json();
+// Image paths (self-hosted in public/images/)
+const IMAGE_POSTER_PATH = '/images/poster.png';
+const IMAGE_LOGO_PATH = '/images/logo.png';
+const IMAGE_BG_PATH = '/images/background.jpg';
+
+// Determine which sessions exist for a given race from the API data
+function getSessionsForRace(race) {
+    const sessions = [];
+    for (const def of SESSION_DEFS) {
+        if (race[def.apiField]) {
+            sessions.push({
+                id: def.id,
+                name: def.name,
+                searchTerm: def.searchTerm,
+                date: race[def.apiField].date,
+                time: race[def.apiField].time
+            });
+        }
     }
-    
+    // The race itself is always present
+    sessions.push({
+        id: RACE_SESSION.id,
+        name: RACE_SESSION.name,
+        searchTerm: RACE_SESSION.searchTerm,
+        date: race.date,
+        time: race.time
+    });
+    return sessions;
+}
+
+// Fetch with caching — resilient to Cache API unavailability
+async function fetchWithCache(url, cacheKey, ctx, ttl = 86400) {
+    // Try cache first
+    try {
+        const cache = caches.default;
+        const cacheResponse = await cache.match(cacheKey);
+        if (cacheResponse) {
+            return cacheResponse.json();
+        }
+    } catch (cacheErr) {
+        console.warn('Cache read failed, falling back to direct fetch:', cacheErr);
+    }
+
     // Fetch from API
     const response = await fetch(url);
+
+    if (!response.ok) {
+        throw new Error(`API returned ${response.status}: ${response.statusText}`);
+    }
+
     const data = await response.json();
-    
-    // Cache the response
-    const cacheableResponse = new Response(JSON.stringify(data), {
-        headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': `public, max-age=${ttl}`
-        }
-    });
-    ctx.waitUntil(cache.put(cacheKey, cacheableResponse.clone()));
-    
+
+    // Try to cache the response
+    try {
+        const cache = caches.default;
+        const cacheableResponse = new Response(JSON.stringify(data), {
+            headers: {
+                'Content-Type': 'application/json',
+                'Cache-Control': `public, max-age=${ttl}`
+            }
+        });
+        ctx.waitUntil(cache.put(cacheKey, cacheableResponse.clone()));
+    } catch (cacheErr) {
+        console.warn('Cache write failed:', cacheErr);
+    }
+
     return data;
 }
 
@@ -73,7 +123,7 @@ async function getSeasons(ctx) {
             cacheKey,
             ctx
         );
-        
+
         return data.MRData.SeasonTable.Seasons
             .map(s => parseInt(s.season))
             .filter(s => s >= 2000)
@@ -85,7 +135,7 @@ async function getSeasons(ctx) {
     }
 }
 
-// Get calendar for a season
+// Get calendar for a season (preserves session fields for sprint detection)
 async function getCalendar(year, ctx) {
     try {
         const cacheKey = `https://f1catchup-cache/calendar/${year}`;
@@ -94,13 +144,20 @@ async function getCalendar(year, ctx) {
             cacheKey,
             ctx
         );
-        
+
         return data.MRData.RaceTable.Races.map(race => ({
             round: parseInt(race.round),
             name: race.raceName,
             circuit: race.Circuit.circuitName,
             location: race.Circuit.Location.country,
-            date: race.date
+            date: race.date,
+            time: race.time,
+            FirstPractice: race.FirstPractice,
+            SecondPractice: race.SecondPractice,
+            ThirdPractice: race.ThirdPractice,
+            Qualifying: race.Qualifying,
+            Sprint: race.Sprint,
+            SprintQualifying: race.SprintQualifying
         }));
     } catch (error) {
         console.error(`Failed to fetch ${year} calendar:`, error);
@@ -108,32 +165,42 @@ async function getCalendar(year, ctx) {
     }
 }
 
-// Search Torbox
+// Search Torbox — returns { torrents, error } for proper error handling
 async function searchTorbox(query, apiKey) {
-    if (!apiKey) return [];
+    if (!apiKey) return { torrents: [], error: 'No API key provided' };
 
     try {
-        const response = await fetch(`${TORBOX_API}/torrents/search?query=${encodeURIComponent(query)}`, {
-            headers: { 'Authorization': `Bearer ${apiKey}` }
-        });
-        
+        const response = await fetch(
+            `${TORBOX_API}/torrents/search?query=${encodeURIComponent(query)}`,
+            { headers: { 'Authorization': `Bearer ${apiKey}` } }
+        );
+
+        if (response.status === 401 || response.status === 403) {
+            return { torrents: [], error: 'invalid_api_key' };
+        }
+
+        if (!response.ok) {
+            console.error(`Torbox API returned ${response.status} for query: ${query}`);
+            return { torrents: [], error: `Torbox API error: ${response.status}` };
+        }
+
         const data = await response.json();
-        return data?.data?.torrents || [];
+        return { torrents: data?.data?.torrents || [], error: null };
     } catch (error) {
         console.error('Torbox search error:', error);
-        return [];
+        return { torrents: [], error: 'Network error searching Torbox' };
     }
 }
 
 // Generate manifest
-function getManifest() {
+function getManifest(images) {
     return {
         id: 'com.f1catchup.addon',
-        version: '3.0.0',
+        version: '0.1.0',
         name: 'F1 Catchup',
-        description: 'Formula 1 sessions with Torbox - Auto-updating calendar',
-        logo: F1_LOGO,
-        background: F1_BACKGROUND,
+        description: 'Formula 1 sessions with Torbox - Includes sprint weekends',
+        logo: images.logo,
+        background: images.background,
         resources: ['catalog', 'meta', 'stream'],
         types: ['series'],
         catalogs: [{
@@ -147,65 +214,73 @@ function getManifest() {
 }
 
 // Handle catalog request
-async function handleCatalog(ctx) {
+async function handleCatalog(ctx, images) {
     const seasons = await getSeasons(ctx);
-    
+
     const metas = seasons.map(year => ({
         id: `f1catchup:season:${year}`,
         type: 'series',
         name: `Season ${year}`,
-        poster: SEASON_POSTER,
-        background: F1_BACKGROUND,
+        poster: images.poster,
+        background: images.background,
         description: `Formula 1 ${year} World Championship\nAll practice sessions, qualifying, and races`,
         releaseInfo: `${year}`,
         genres: ['Motorsport', 'Racing', 'Formula 1'],
-        logo: F1_LOGO
+        logo: images.logo
     }));
-    
+
     return { metas };
 }
 
 // Handle meta request
-async function handleMeta(id, ctx) {
+async function handleMeta(id, ctx, images) {
     if (!id.startsWith('f1catchup:season:')) {
         return { meta: null };
     }
-    
+
     const year = parseInt(id.split(':')[2]);
     const races = await getCalendar(year, ctx);
-    
+
     if (!races.length) {
         return { meta: null };
     }
-    
+
     const videos = [];
+    let episodeNumber = 0;
+
     races.forEach(race => {
-        SESSIONS.forEach((session, sessionIndex) => {
-            const episodeNumber = (race.round - 1) * SESSIONS.length + sessionIndex + 1;
+        const sessions = getSessionsForRace(race);
+        sessions.forEach(session => {
+            episodeNumber++;
             videos.push({
-                id: `f1catchup:${year}:${race.round}:${session.toLowerCase().replace(' ', '')}`,
-                title: `${episodeNumber} - ${session}`,
-                name: `${episodeNumber} - ${session}`,
+                id: `f1catchup:${year}:${race.round}:${session.id}`,
+                title: `${race.name} - ${session.name}`,
+                name: `${race.name} - ${session.name}`,
                 season: 1,
                 episode: episodeNumber,
-                released: race.date ? `${race.date}T00:00:00.000Z` : `${year}-01-01T00:00:00.000Z`,
+                released: session.date
+                    ? `${session.date}T${session.time || '00:00:00'}Z`
+                    : `${year}-01-01T00:00:00.000Z`,
                 overview: `Round ${race.round} - ${race.name}`,
                 thumbnail: getFlagUrl(race.location)
             });
         });
     });
-    
+
+    // Reverse so latest sessions appear first
+    videos.reverse();
+
     return {
         meta: {
             id,
             type: 'series',
             name: `Season ${year}`,
-            poster: SEASON_POSTER,
-            background: F1_BACKGROUND,
+            poster: images.poster,
+            background: images.background,
             description: `Formula 1 ${year} World Championship\nAll practice sessions, qualifying, and races`,
             releaseInfo: `${year}`,
             genres: ['Motorsport', 'Racing', 'Formula 1'],
-            logo: F1_LOGO,
+            logo: images.logo,
             videos
         }
     };
@@ -216,71 +291,107 @@ async function handleStream(id, apiKey, ctx) {
     if (!id.startsWith('f1catchup:')) {
         return { streams: [] };
     }
-    
+
     const parts = id.split(':');
     const year = parts[1];
     const round = parseInt(parts[2]);
     const session = parts[3];
-    
+
     const races = await getCalendar(year, ctx);
     const race = races.find(r => r.round === round);
-    
+
     if (!race) {
         return { streams: [] };
     }
-    
-    const sessionName = SESSION_SEARCH_TERMS[session] || session;
-    const circuitShort = race.circuit.split(' ').slice(0, 2).join(' ');
-    
+
+    const sessionDef = ALL_SESSION_DEFS.find(d => d.id === session);
+    const sessionName = sessionDef ? sessionDef.searchTerm : session;
+    const sessionDisplayName = sessionDef ? sessionDef.name : session;
+
+    const paddedRound = String(round).padStart(2, '0');
+    const raceName = race.name.replace(' Grand Prix', '').replace(' Prix', '');
+
     const searchQueries = [
-        `Formula 1 ${year} ${race.location} ${sessionName}`,
-        `F1 ${year} Round ${round} ${sessionName}`,
-        `Formula 1 ${year} R${String(round).padStart(2, '0')} ${sessionName}`,
-        `F1 ${year} ${circuitShort} ${sessionName}`,
+        `Formula 1 ${year} Round ${paddedRound} ${race.location} ${sessionName}`,
+        `Formula 1 ${year}x${paddedRound} ${sessionName}`,
+        `F1 ${year} R${paddedRound} ${sessionName}`,
+        `Formula 1 ${year} Round ${paddedRound} ${race.location}`,
+        `Formula 1 ${year} ${raceName} ${sessionName}`,
     ];
-    
+
+    // Run all searches in parallel
+    const searchPromises = searchQueries.map(query => searchTorbox(query, apiKey));
+    const searchResults = await Promise.allSettled(searchPromises);
+
     const streams = [];
     const seenHashes = new Set();
-    
-    for (const query of searchQueries) {
-        const results = await searchTorbox(query, apiKey);
-        
-        for (const result of results) {
-            const hash = result.hash || result.id;
+    let apiKeyError = false;
+
+    for (const result of searchResults) {
+        if (result.status !== 'fulfilled') continue;
+        const { torrents, error } = result.value;
+
+        if (error === 'invalid_api_key') {
+            apiKeyError = true;
+            break;
+        }
+
+        for (const torrent of torrents) {
+            const hash = torrent.hash || torrent.id;
             if (hash && seenHashes.has(hash)) continue;
             if (hash) seenHashes.add(hash);
-            
-            const name = result.raw_title || result.name || 'Unknown';
-            const size = result.size ? `${(result.size / 1024 / 1024 / 1024).toFixed(2)} GB` : '';
-            const seeds = result.seeders ? `👥 ${result.seeders}` : '';
-            
-            if (result.magnet || result.hash) {
+
+            const name = torrent.raw_title || torrent.name || 'Unknown';
+            const size = torrent.size
+                ? `${(torrent.size / 1024 / 1024 / 1024).toFixed(2)} GB`
+                : '';
+            const seeds = torrent.seeders || 0;
+            const seedsDisplay = seeds ? `Seeds: ${seeds}` : '';
+
+            if (torrent.magnet || torrent.hash) {
                 streams.push({
                     name: 'Torbox',
-                    title: `${name}\n${[size, seeds].filter(Boolean).join(' | ')}`,
-                    infoHash: result.hash,
-                    sources: result.hash ? [`dht:${result.hash}`] : undefined,
-                    behaviorHints: { bingeGroup: `f1-${year}-${round}` }
+                    title: `${name}\n${[size, seedsDisplay].filter(Boolean).join(' | ')}`,
+                    infoHash: torrent.hash,
+                    sources: torrent.hash ? [`dht:${torrent.hash}`] : undefined,
+                    behaviorHints: { bingeGroup: `f1-${year}-${round}` },
+                    _seeders: seeds
                 });
             }
-            
+
             if (streams.length >= 15) break;
         }
-        
+
         if (streams.length >= 15) break;
     }
-    
+
+    if (apiKeyError) {
+        return {
+            streams: [{
+                name: 'F1 Catchup',
+                title: 'Invalid Torbox API key.\nPlease reinstall the addon with a valid key.',
+                externalUrl: 'https://torbox.app/settings'
+            }]
+        };
+    }
+
     if (streams.length === 0) {
         return {
             streams: [{
                 name: 'F1 Catchup',
-                title: `No streams found for:\n${race.name} - ${sessionName}`,
+                title: `No streams found for:\n${race.name} - ${sessionDisplayName}\n\nTry searching on Torbox directly.`,
                 externalUrl: 'https://torbox.app'
             }]
         };
     }
-    
-    return { streams };
+
+    // Sort by seeders descending for better UX
+    streams.sort((a, b) => (b._seeders || 0) - (a._seeders || 0));
+
+    // Remove internal _seeders field before returning
+    return {
+        streams: streams.map(({ _seeders, ...rest }) => rest)
+    };
 }
 
 // JSON response helper
@@ -301,7 +412,7 @@ export async function onRequest(ctx) {
     const { request } = ctx;
     const url = new URL(request.url);
     const path = url.pathname;
-    
+
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
         return new Response(null, {
@@ -312,49 +423,57 @@ export async function onRequest(ctx) {
             }
         });
     }
-    
+
     // Parse path: /:apiKey/resource/type/id.json
     const pathParts = path.split('/').filter(Boolean);
-    
+
     // Need at least apiKey and resource for API routes
     if (pathParts.length < 2) {
         return jsonResponse({ error: 'Invalid path' }, 400);
     }
-    
+
     const apiKey = decodeURIComponent(pathParts[0]);
     const resource = pathParts[1];
-    
+
+    // Compute image URLs from request origin
+    const origin = url.origin;
+    const images = {
+        poster: origin + IMAGE_POSTER_PATH,
+        logo: origin + IMAGE_LOGO_PATH,
+        background: origin + IMAGE_BG_PATH
+    };
+
     try {
         // Handle manifest
         if (resource === 'manifest.json') {
-            return jsonResponse(getManifest());
+            return jsonResponse(getManifest(images));
         }
-        
+
         // Handle catalog
         if (resource === 'catalog' && pathParts.length >= 4) {
             const catalogId = pathParts[3].replace('.json', '');
             if (catalogId === 'f1-catchup-catalog') {
-                const result = await handleCatalog(ctx);
+                const result = await handleCatalog(ctx, images);
                 return jsonResponse(result);
             }
         }
-        
+
         // Handle meta
         if (resource === 'meta' && pathParts.length >= 4) {
             const id = decodeURIComponent(pathParts[3].replace('.json', ''));
-            const result = await handleMeta(id, ctx);
+            const result = await handleMeta(id, ctx, images);
             return jsonResponse(result);
         }
-        
+
         // Handle stream
         if (resource === 'stream' && pathParts.length >= 4) {
             const id = decodeURIComponent(pathParts[3].replace('.json', ''));
             const result = await handleStream(id, apiKey, ctx);
             return jsonResponse(result);
         }
-        
+
         return jsonResponse({ error: 'Not found' }, 404);
-        
+
     } catch (error) {
         console.error('Error:', error);
         return jsonResponse({ error: 'Internal server error' }, 500);
