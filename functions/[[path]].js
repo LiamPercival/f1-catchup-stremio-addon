@@ -290,35 +290,57 @@ async function getCalendar(year, ctx) {
     }
 }
 
-// Search Torbox
+// Search Torbox - using the correct search endpoint
 async function searchTorbox(query, apiKey) {
     if (!apiKey) return { torrents: [], error: "No API key provided" };
 
-    try {
-        const response = await fetch(
-            TORBOX_API + "/torrents/search?query=" + encodeURIComponent(query),
-            { 
+    // Try multiple possible endpoints
+    const endpoints = [
+        "https://search-api.torbox.app/torrents/" + encodeURIComponent(query) + "?metadata=false&season=0&episode=0",
+        "https://api.torbox.app/v1/api/search?query=" + encodeURIComponent(query),
+        "https://api.torbox.app/v1/api/torrents/search?query=" + encodeURIComponent(query)
+    ];
+
+    for (const url of endpoints) {
+        try {
+            const response = await fetch(url, { 
                 headers: { 
                     "Authorization": "Bearer " + apiKey,
                     "User-Agent": "F1CatchupAddon/0.1.0"
                 } 
+            });
+
+            if (response.status === 401 || response.status === 403) {
+                return { torrents: [], error: "invalid_api_key" };
             }
-        );
 
-        if (response.status === 401 || response.status === 403) {
-            return { torrents: [], error: "invalid_api_key" };
+            if (!response.ok) {
+                continue; // Try next endpoint
+            }
+
+            const data = await response.json();
+            
+            // Handle different response formats
+            var torrents = [];
+            if (data && data.data && data.data.torrents) {
+                torrents = data.data.torrents;
+            } else if (data && data.data && Array.isArray(data.data)) {
+                torrents = data.data;
+            } else if (data && data.torrents) {
+                torrents = data.torrents;
+            } else if (Array.isArray(data)) {
+                torrents = data;
+            }
+            
+            if (torrents.length > 0) {
+                return { torrents: torrents, error: null, endpoint: url };
+            }
+        } catch (error) {
+            console.error("Torbox search error for " + url + ":", error);
         }
-
-        if (!response.ok) {
-            return { torrents: [], error: "Torbox API error: " + response.status };
-        }
-
-        const data = await response.json();
-        return { torrents: (data && data.data && data.data.torrents) || [], error: null };
-    } catch (error) {
-        console.error("Torbox search error:", error);
-        return { torrents: [], error: "Network error searching Torbox" };
     }
+    
+    return { torrents: [], error: "No results from any endpoint" };
 }
 
 // Generate manifest
@@ -625,8 +647,9 @@ export async function onRequest(ctx) {
                 query: query,
                 torrentCount: result.torrents.length,
                 error: result.error,
+                endpoint: result.endpoint || "none worked",
                 firstFew: result.torrents.slice(0, 5).map(function(t) {
-                    return { name: t.raw_title || t.name, seeders: t.seeders };
+                    return { name: t.raw_title || t.name || t.title, seeders: t.seeders, hash: t.hash };
                 })
             });
         }
