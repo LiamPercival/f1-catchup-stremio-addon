@@ -1,5 +1,5 @@
 // F1 Catchup - Cloudflare Pages Function
-// Handles all Stremio addon routes
+// Simplified version with better error handling
 
 const F1_API = 'https://api.jolpi.ca/ergast/f1';
 const TORBOX_API = 'https://api.torbox.app/v1/api';
@@ -128,10 +128,13 @@ async function getSeasons(ctx) {
             .map(s => parseInt(s.season))
             .filter(s => s >= 2000)
             .sort((a, b) => b - a);
+        
+        return seasons;
     } catch (error) {
         console.error('Failed to fetch seasons:', error);
+        // Fallback to hardcoded recent seasons
         const currentYear = new Date().getFullYear();
-        return Array.from({ length: 10 }, (_, i) => currentYear - i);
+        return Array.from({ length: 25 }, (_, i) => currentYear - i);
     }
 }
 
@@ -235,6 +238,7 @@ async function handleCatalog(ctx, images) {
 // Handle meta request
 async function handleMeta(id, ctx, images) {
     if (!id.startsWith('f1catchup:season:')) {
+        console.log('ID does not start with f1catchup:season:');
         return { meta: null };
     }
 
@@ -242,6 +246,7 @@ async function handleMeta(id, ctx, images) {
     const races = await getCalendar(year, ctx);
 
     if (!races.length) {
+        console.log('No races found for year:', year);
         return { meta: null };
     }
 
@@ -287,7 +292,9 @@ async function handleMeta(id, ctx, images) {
 }
 
 // Handle stream request
-async function handleStream(id, apiKey, ctx) {
+async function handleStream(id, apiKey) {
+    console.log('handleStream called with id:', id);
+    
     if (!id.startsWith('f1catchup:')) {
         return { streams: [] };
     }
@@ -452,6 +459,7 @@ export async function onRequest(ctx) {
         // Handle catalog
         if (resource === 'catalog' && pathParts.length >= 4) {
             const catalogId = pathParts[3].replace('.json', '');
+            console.log('Catalog ID:', catalogId);
             if (catalogId === 'f1-catchup-catalog') {
                 const result = await handleCatalog(ctx, images);
                 return jsonResponse(result);
@@ -468,7 +476,8 @@ export async function onRequest(ctx) {
         // Handle stream
         if (resource === 'stream' && pathParts.length >= 4) {
             const id = decodeURIComponent(pathParts[3].replace('.json', ''));
-            const result = await handleStream(id, apiKey, ctx);
+            console.log('Stream ID:', id);
+            const result = await handleStream(id, apiKey);
             return jsonResponse(result);
         }
 
@@ -476,6 +485,6 @@ export async function onRequest(ctx) {
 
     } catch (error) {
         console.error('Error:', error);
-        return jsonResponse({ error: 'Internal server error' }, 500);
+        return jsonResponse({ error: 'Internal server error', message: error.message }, 500);
     }
 }
