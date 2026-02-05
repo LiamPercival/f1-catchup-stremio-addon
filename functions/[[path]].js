@@ -282,60 +282,48 @@ async function getCalendar(year, ctx) {
     }
 }
 
-// Search Torbox - Updated with corrected endpoints and q= parameter
+// Search Torbox - Updated with corrected endpoints and path parameter
 async function searchTorbox(query, apiKey) {
     if (!apiKey) return { torrents: [], error: "No API key provided" };
 
-    // We will try the two most reliable global search endpoints
-    const trials = [
-        {
-            name: "Torbox Global All",
-            url: "https://api.torbox.app/v1/api/search/all?q=" + encodeURIComponent(query),
-            headers: { "Authorization": "Bearer " + apiKey }
-        },
-        {
-            name: "Voyager API",
-            // Voyager often works better without the Authorization header if the token is in the URL
-            url: "https://search-api.torbox.app/search?q=" + encodeURIComponent(query) + "&token=" + apiKey,
-            headers: {} 
+    // Using the current Voyager search API
+    const endpoint = "https://search-api.torbox.app/torrents/search/" + encodeURIComponent(query) + "?check_cache=true";
+
+    try {
+        const response = await fetch(endpoint, {
+            headers: {
+                "User-Agent": "F1CatchupAddon/0.1.0",
+                "Authorization": "Bearer " + apiKey
+            }
+        });
+
+        if (response.status === 401 || response.status === 403) {
+            return { torrents: [], error: "invalid_api_key" };
         }
-    ];
 
-    for (const trial of trials) {
-        try {
-            const response = await fetch(trial.url, { 
-                headers: Object.assign({ "User-Agent": "Mozilla/5.0" }, trial.headers) 
-            });
-
-            if (response.status === 401 || response.status === 403) {
-                return { torrents: [], error: "invalid_api_key" };
-            }
-
-            if (!response.ok) continue;
-
-            const data = await response.json();
-            let torrents = [];
-            
-            // Flexible parsing for different Torbox response structures
-            if (data.data && Array.isArray(data.data)) {
-                torrents = data.data;
-            } else if (data.data && data.data.torrents) {
-                torrents = data.data.torrents;
-            } else if (Array.isArray(data)) {
-                torrents = data;
-            } else if (data.torrents) {
-                torrents = data.torrents;
-            }
-            
-            if (torrents.length > 0) {
-                return { torrents: torrents, error: null, endpoint: trial.name };
-            }
-        } catch (error) {
-            console.error("Search error for " + trial.name + ":", error);
+        if (!response.ok) {
+            return { torrents: [], error: "API returned " + response.status, endpoint: "Search API" };
         }
+
+        const data = await response.json();
+        let torrents = [];
+
+        // Flexible parsing for different Torbox response structures
+        if (data.data && Array.isArray(data.data)) {
+            torrents = data.data;
+        } else if (data.data && data.data.torrents) {
+            torrents = data.data.torrents;
+        } else if (Array.isArray(data)) {
+            torrents = data;
+        } else if (data.torrents) {
+            torrents = data.torrents;
+        }
+
+        return { torrents: torrents, error: null, endpoint: "Search API" };
+    } catch (error) {
+        console.error("Search error:", error);
+        return { torrents: [], error: error.message, endpoint: "Search API" };
     }
-    
-    return { torrents: [], error: "No results from any endpoint", endpoint: "none worked" };
 }
 
 // Generate manifest
@@ -463,6 +451,8 @@ async function handleStream(id, apiKey, ctx) {
         "F1 " + year + " R" + paddedRound + " " + sessionName,
         "Formula 1 " + year + " Round " + paddedRound + " " + race.location,
         "Formula 1 " + year + " " + raceName + " " + sessionName,
+        "F1 " + year + " " + race.location + " " + sessionName,
+        "Formula 1 " + year + " R" + round + " " + sessionName,
     ];
 
     const searchPromises = searchQueries.map(query => searchTorbox(query, apiKey));
@@ -477,27 +467,42 @@ async function handleStream(id, apiKey, ctx) {
         if (error === "invalid_api_key") { apiKeyError = true; break; }
 
         for (const torrent of torrents) {
-            const hash = torrent.hash || torrent.id;
-            if (hash && seenHashes.has(hash)) continue;
-            if (hash) seenHashes.add(hash);
+            const currentHash = torrent.hash || torrent.id;
+            if (!currentHash) continue;
+            if (seenHashes.has(currentHash)) continue;
+            seenHashes.add(currentHash);
 
             const name = torrent.raw_title || torrent.name || "Unknown";
             const size = torrent.size ? (torrent.size / 1024 / 1024 / 1024).toFixed(2) + " GB" : "";
             const seeds = torrent.seeders || 0;
+            const isCached = torrent.cached === true || torrent.cached === 1 || torrent.cached === "yes";
+            const cachedLabel = isCached ? " [Instant]" : "";
 
-            if (torrent.magnet || torrent.hash) {
-                streams.push({
-                    name: "Torbox",
-                    title: name + "\n" + [size, seeds ? "Seeds: " + seeds : ""].filter(Boolean).join(" | "),
-                    infoHash: torrent.hash,
-                    sources: torrent.hash ? ["dht:" + torrent.hash] : undefined,
-                    behaviorHints: { bingeGroup: "f1-" + year + "-" + round },
-                    _seeders: seeds
-                });
-            }
-            if (streams.length >= 15) break;
+            const url = new URL(ctx.request.url);
+            const downloadUrl = url.origin + "/" + encodeURIComponent(apiKey) + "/download/" + currentHash;
+
+            // Torbox direct stream
+            streams.push({
+                name: "Torbox" + cachedLabel,
+                title: name + "\n" + [size, seeds ? "Seeds: " + seeds : ""].filter(Boolean).join(" | "),
+                url: downloadUrl,
+                behaviorHints: { bingeGroup: "f1-" + year + "-" + round },
+                _seeders: seeds + (isCached ? 1000000 : 0) // Prioritize cached
+            });
+
+            // Standard Torrent stream as fallback
+            streams.push({
+                name: "Torrent [P2P]",
+                title: name + "\n" + [size, seeds ? "Seeds: " + seeds : ""].filter(Boolean).join(" | "),
+                infoHash: currentHash,
+                sources: ["dht:" + currentHash],
+                behaviorHints: { bingeGroup: "f1-" + year + "-" + round },
+                _seeders: seeds
+            });
+
+            if (streams.length >= 30) break;
         }
-        if (streams.length >= 15) break;
+        if (streams.length >= 30) break;
     }
 
     if (apiKeyError) {
@@ -507,8 +512,71 @@ async function handleStream(id, apiKey, ctx) {
         return { streams: [{ name: "F1 Catchup", title: "No streams found for:\n" + race.name + " - " + sessionDisplayName, externalUrl: "https://torbox.app" }] };
     }
 
+    // Sort by priority (cached first, then by seeders)
     streams.sort((a, b) => (b._seeders || 0) - (a._seeders || 0));
-    return { streams: streams.map(s => { const copy = Object.assign({}, s); delete copy._seeders; return copy; }) };
+
+    // Cleanup and return
+    return {
+        streams: streams.map(s => {
+            const copy = Object.assign({}, s);
+            delete copy._seeders;
+            return copy;
+        })
+    };
+}
+
+// Handle download request
+async function handleDownload(hash, apiKey) {
+    if (!apiKey) return jsonResponse({ error: "No API key" }, 401);
+
+    try {
+        // 1. Add torrent to Torbox (or get it if already added)
+        const addResponse = await fetch("https://api.torbox.app/v1/api/torrents/createtorrent", {
+            method: "POST",
+            headers: {
+                "Authorization": "Bearer " + apiKey,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                magnet: "magnet:?xt=urn:btih:" + hash,
+                as_queued: false
+            })
+        });
+
+        const addData = await addResponse.json();
+
+        let torrentId = null;
+        if (addData.data && addData.data.torrent_id) {
+            torrentId = addData.data.torrent_id;
+        } else if (addData.torrent_id) {
+            torrentId = addData.torrent_id;
+        }
+
+        // If not in response, it might be already in the list
+        if (!torrentId) {
+            const listResponse = await fetch("https://api.torbox.app/v1/api/torrents/mylist", {
+                headers: { "Authorization": "Bearer " + apiKey }
+            });
+            const listData = await listResponse.json();
+            if (listData.data && Array.isArray(listData.data)) {
+                const existing = listData.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
+                if (existing) torrentId = existing.id || existing.torrent_id;
+            }
+        }
+
+        if (!torrentId) {
+            return jsonResponse({
+                error: "Could not add torrent to Torbox or find it in your list.",
+                detail: addData
+            }, 400);
+        }
+
+        // 2. Redirect to Torbox download request with redirect=true
+        const dlUrl = "https://api.torbox.app/v1/api/torrents/requestdl?torrent_id=" + torrentId + "&token=" + encodeURIComponent(apiKey) + "&redirect=true";
+        return Response.redirect(dlUrl, 302);
+    } catch (error) {
+        return jsonResponse({ error: "Download error", message: error.message }, 500);
+    }
 }
 
 // JSON response helper
@@ -550,6 +618,10 @@ export async function onRequest(ctx) {
         if (resource === "meta" && pathParts.length >= 4) return jsonResponse(await handleMeta(decodeURIComponent(pathParts[3].replace(".json", "")), ctx, images));
         if (resource === "stream" && pathParts.length >= 4) return jsonResponse(await handleStream(decodeURIComponent(pathParts[3].replace(".json", "")), apiKey, ctx));
         
+        if (resource === "download" && pathParts.length >= 3) {
+            return await handleDownload(pathParts[2], apiKey);
+        }
+
         if (resource === "debug") {
             const query = decodeURIComponent(pathParts[2] || "F1 2024");
             const result = await searchTorbox(query, apiKey);
