@@ -1,9 +1,10 @@
 // F1 Catchup - Cloudflare Pages Function
-// Corrected version with fixed search endpoints and syntax
+// Fixed version with corrected Torbox Voyager Search API endpoints
 
 const F1_API = "https://api.jolpi.ca/ergast/f1";
 const OPENF1_API = "https://api.openf1.org/v1";
 const TORBOX_API = "https://api.torbox.app/v1/api";
+const TORBOX_SEARCH_API = "https://search-api.torbox.app";
 
 // Country codes for flags
 const COUNTRY_FLAGS = {
@@ -102,7 +103,7 @@ async function fetchWithCache(url, cacheKey, ctx, ttl = 86400) {
 
     const response = await fetch(url, {
         headers: {
-            "User-Agent": "F1CatchupAddon/0.1.0"
+            "User-Agent": "F1CatchupAddon/0.2.0"
         }
     });
 
@@ -282,69 +283,121 @@ async function getCalendar(year, ctx) {
     }
 }
 
-// Search Torbox - Updated with corrected endpoints and q= parameter
+// Search Torbox - Using the Voyager Search API (search-api.torbox.app)
+// Searches both torrents and usenet endpoints for maximum coverage
+// Note: Search is restricted to paid TorBox users only (Usenet may require Pro tier)
 async function searchTorbox(query, apiKey) {
     if (!apiKey) return { torrents: [], error: "No API key provided" };
 
-    // We will try the two most reliable global search endpoints
-    const trials = [
+    // Search both torrents and usenet endpoints in parallel
+    const endpoints = [
         {
-            name: "Torbox Global All",
-            url: "https://api.torbox.app/v1/api/search/all?q=" + encodeURIComponent(query),
-            headers: { "Authorization": "Bearer " + apiKey }
+            name: "Torrents",
+            url: TORBOX_SEARCH_API + "/torrents/search?query=" + encodeURIComponent(query),
+            type: "torrent"
         },
         {
-            name: "Voyager API",
-            // Voyager often works better without the Authorization header if the token is in the URL
-            url: "https://search-api.torbox.app/search?q=" + encodeURIComponent(query) + "&token=" + apiKey,
-            headers: {} 
+            name: "Usenet",
+            url: TORBOX_SEARCH_API + "/usenet/search?query=" + encodeURIComponent(query),
+            type: "usenet"
         }
     ];
 
-    for (const trial of trials) {
-        try {
-            const response = await fetch(trial.url, { 
-                headers: Object.assign({ "User-Agent": "Mozilla/5.0" }, trial.headers) 
-            });
+    const headers = { 
+        "Authorization": "Bearer " + apiKey,
+        "User-Agent": "F1CatchupAddon/0.2.0",
+        "Content-Type": "application/json"
+    };
 
+    // Fetch all endpoints in parallel
+    const fetchPromises = endpoints.map(async (endpoint) => {
+        try {
+            const response = await fetch(endpoint.url, { headers });
+
+            // Handle auth errors
             if (response.status === 401 || response.status === 403) {
-                return { torrents: [], error: "invalid_api_key" };
+                console.error("Auth error from " + endpoint.name + ":", response.status);
+                return { endpoint: endpoint.name, type: endpoint.type, results: [], authError: true };
             }
 
-            if (!response.ok) continue;
+            if (!response.ok) {
+                console.error("HTTP error from " + endpoint.name + ":", response.status);
+                return { endpoint: endpoint.name, type: endpoint.type, results: [], error: response.status };
+            }
 
             const data = await response.json();
-            let torrents = [];
+            let results = [];
             
             // Flexible parsing for different Torbox response structures
-            if (data.data && Array.isArray(data.data)) {
-                torrents = data.data;
-            } else if (data.data && data.data.torrents) {
-                torrents = data.data.torrents;
+            if (data.data && Array.isArray(data.data.torrents)) {
+                results = data.data.torrents;
+            } else if (data.data && Array.isArray(data.data.nzbs)) {
+                results = data.data.nzbs;
+            } else if (data.data && Array.isArray(data.data)) {
+                results = data.data;
+            } else if (Array.isArray(data.torrents)) {
+                results = data.torrents;
+            } else if (Array.isArray(data.nzbs)) {
+                results = data.nzbs;
             } else if (Array.isArray(data)) {
-                torrents = data;
-            } else if (data.torrents) {
-                torrents = data.torrents;
+                results = data;
             }
             
-            if (torrents.length > 0) {
-                return { torrents: torrents, error: null, endpoint: trial.name };
-            }
+            // Tag results with their source type
+            results = results.map(r => ({ ...r, _sourceType: endpoint.type }));
+            
+            return { endpoint: endpoint.name, type: endpoint.type, results, authError: false };
         } catch (error) {
-            console.error("Search error for " + trial.name + ":", error);
+            console.error("Search error for " + endpoint.name + ":", error.message || error);
+            return { endpoint: endpoint.name, type: endpoint.type, results: [], error: error.message };
+        }
+    });
+
+    const responses = await Promise.all(fetchPromises);
+    
+    // Check if all endpoints returned auth errors
+    const allAuthErrors = responses.every(r => r.authError);
+    if (allAuthErrors) {
+        return { torrents: [], error: "invalid_api_key", detail: "Search requires a paid TorBox subscription" };
+    }
+
+    // Combine results from all endpoints
+    const allResults = [];
+    const seenIds = new Set();
+    const successfulEndpoints = [];
+
+    for (const response of responses) {
+        if (response.results.length > 0) {
+            successfulEndpoints.push(response.endpoint);
+            for (const result of response.results) {
+                // Deduplicate by hash or nzb_id
+                const id = result.hash || result.nzb_id || result.id || (result.raw_title + result.size);
+                if (!seenIds.has(id)) {
+                    seenIds.add(id);
+                    allResults.push(result);
+                }
+            }
         }
     }
+
+    if (allResults.length > 0) {
+        return { 
+            torrents: allResults, 
+            error: null, 
+            endpoint: successfulEndpoints.join(" + ") 
+        };
+    }
     
-    return { torrents: [], error: "No results from any endpoint", endpoint: "none worked" };
+    return { torrents: [], error: "No results found", endpoint: "none" };
 }
 
 // Generate manifest
 function getManifest(images) {
     return {
         id: "com.f1catchup.addon",
-        version: "0.2.0",
+        version: "0.3.0",
         name: "F1 Catchup",
-        description: "Formula 1 sessions with Torbox - Includes sprint weekends",
+        description: "Formula 1 sessions with Torbox - Torrents + Usenet (requires paid Torbox subscription)",
         logo: images.logo,
         background: images.background,
         resources: ["catalog", "meta", "stream"],
@@ -457,49 +510,89 @@ async function handleStream(id, apiKey, ctx) {
     const paddedRound = String(round).padStart(2, "0");
     const raceName = race.name.replace(" Grand Prix", "").replace(" Prix", "");
 
+    // Optimized search queries for F1 content
     const searchQueries = [
         "Formula 1 " + year + " Round " + paddedRound + " " + race.location + " " + sessionName,
-        "Formula 1 " + year + "x" + paddedRound + " " + sessionName,
         "F1 " + year + " R" + paddedRound + " " + sessionName,
-        "Formula 1 " + year + " Round " + paddedRound + " " + race.location,
         "Formula 1 " + year + " " + raceName + " " + sessionName,
+        "F1 " + year + " " + race.location + " " + sessionName,
     ];
 
     const searchPromises = searchQueries.map(query => searchTorbox(query, apiKey));
     const searchResults = await Promise.allSettled(searchPromises);
     const streams = [];
-    const seenHashes = new Set();
+    const seenIds = new Set();
     var apiKeyError = false;
+    var subscriptionError = false;
 
     for (const result of searchResults) {
         if (result.status !== "fulfilled") continue;
-        const { torrents, error } = result.value;
-        if (error === "invalid_api_key") { apiKeyError = true; break; }
+        const { torrents, error, detail } = result.value;
+        
+        if (error === "invalid_api_key") { 
+            apiKeyError = true;
+            if (detail && detail.includes("paid")) {
+                subscriptionError = true;
+            }
+            break; 
+        }
 
-        for (const torrent of torrents) {
-            const hash = torrent.hash || torrent.id;
-            if (hash && seenHashes.has(hash)) continue;
-            if (hash) seenHashes.add(hash);
+        for (const item of torrents) {
+            // Handle both torrent and usenet results
+            const isUsenet = item._sourceType === "usenet" || item.nzb_id;
+            const uniqueId = item.hash || item.nzb_id || item.id;
+            
+            if (uniqueId && seenIds.has(uniqueId)) continue;
+            if (uniqueId) seenIds.add(uniqueId);
 
-            const name = torrent.raw_title || torrent.name || "Unknown";
-            const size = torrent.size ? (torrent.size / 1024 / 1024 / 1024).toFixed(2) + " GB" : "";
-            const seeds = torrent.seeders || 0;
+            const name = item.raw_title || item.name || item.title || "Unknown";
+            const size = item.size ? (item.size / 1024 / 1024 / 1024).toFixed(2) + " GB" : "";
+            const seeds = item.seeders || item.seed || 0;
+            
+            // Build stream info based on type
+            const sourceLabel = isUsenet ? "Torbox NZB" : "Torbox";
+            const infoLine = [
+                size,
+                isUsenet ? "Usenet" : (seeds ? "Seeds: " + seeds : "")
+            ].filter(Boolean).join(" | ");
 
-            if (torrent.magnet || torrent.hash) {
+            if (isUsenet) {
+                // Usenet results - use the nzb link or ID
                 streams.push({
-                    name: "Torbox",
-                    title: name + "\n" + [size, seeds ? "Seeds: " + seeds : ""].filter(Boolean).join(" | "),
-                    infoHash: torrent.hash,
-                    sources: torrent.hash ? ["dht:" + torrent.hash] : undefined,
+                    name: sourceLabel,
+                    title: name + "\n" + infoLine,
+                    // For usenet, we'd need to trigger a Torbox download
+                    // Using externalUrl to let Torbox handle the NZB
+                    externalUrl: item.nzb || item.link || "https://torbox.app",
                     behaviorHints: { bingeGroup: "f1-" + year + "-" + round },
-                    _seeders: seeds
+                    _seeders: 0, // Usenet doesn't have seeders, sort last
+                    _isUsenet: true
+                });
+            } else if (item.magnet || item.hash) {
+                // Torrent results
+                streams.push({
+                    name: sourceLabel,
+                    title: name + "\n" + infoLine,
+                    infoHash: item.hash,
+                    sources: item.hash ? ["dht:" + item.hash] : undefined,
+                    behaviorHints: { bingeGroup: "f1-" + year + "-" + round },
+                    _seeders: seeds,
+                    _isUsenet: false
                 });
             }
-            if (streams.length >= 15) break;
+            
+            if (streams.length >= 20) break;
         }
-        if (streams.length >= 15) break;
+        if (streams.length >= 20) break;
     }
 
+    if (subscriptionError) {
+        return { streams: [{ 
+            name: "F1 Catchup", 
+            title: "Torbox search requires a paid subscription.\nVisit torbox.app to upgrade.", 
+            externalUrl: "https://torbox.app/pricing" 
+        }] };
+    }
     if (apiKeyError) {
         return { streams: [{ name: "F1 Catchup", title: "Invalid Torbox API key.", externalUrl: "https://torbox.app/settings" }] };
     }
@@ -507,8 +600,21 @@ async function handleStream(id, apiKey, ctx) {
         return { streams: [{ name: "F1 Catchup", title: "No streams found for:\n" + race.name + " - " + sessionDisplayName, externalUrl: "https://torbox.app" }] };
     }
 
-    streams.sort((a, b) => (b._seeders || 0) - (a._seeders || 0));
-    return { streams: streams.map(s => { const copy = Object.assign({}, s); delete copy._seeders; return copy; }) };
+    // Sort: torrents with most seeders first, then usenet
+    streams.sort((a, b) => {
+        // Torrents before usenet
+        if (a._isUsenet !== b._isUsenet) return a._isUsenet ? 1 : -1;
+        // Then by seeders
+        return (b._seeders || 0) - (a._seeders || 0);
+    });
+    
+    // Clean up internal properties before returning
+    return { streams: streams.map(s => { 
+        const copy = Object.assign({}, s); 
+        delete copy._seeders; 
+        delete copy._isUsenet;
+        return copy; 
+    }) };
 }
 
 // JSON response helper
@@ -550,27 +656,51 @@ export async function onRequest(ctx) {
         if (resource === "meta" && pathParts.length >= 4) return jsonResponse(await handleMeta(decodeURIComponent(pathParts[3].replace(".json", "")), ctx, images));
         if (resource === "stream" && pathParts.length >= 4) return jsonResponse(await handleStream(decodeURIComponent(pathParts[3].replace(".json", "")), apiKey, ctx));
         
+        // Debug endpoint to test search
         if (resource === "debug") {
-            const query = decodeURIComponent(pathParts[2] || "F1 2024");
+            const query = decodeURIComponent(pathParts[2] || "Formula 1 2024");
             const result = await searchTorbox(query, apiKey);
             return jsonResponse({
                 query: query,
                 torrentCount: result.torrents.length,
                 error: result.error,
-                endpoint: result.endpoint || "none worked",
-                firstFew: result.torrents.slice(0, 5).map(t => ({ name: t.raw_title || t.name || t.title, seeders: t.seeders, hash: t.hash }))
+                endpoint: result.endpoint || "none",
+                firstFew: result.torrents.slice(0, 5).map(t => ({ 
+                    name: t.raw_title || t.name || t.title, 
+                    seeders: t.seeders || t.seed, 
+                    hash: t.hash 
+                }))
             });
         }
 
+        // Validate API key endpoint
         if (resource === "validate" && apiKey) {
-            const response = await fetch("https://api.torbox.app/v1/api/user/me", { headers: { "Authorization": "Bearer " + apiKey, "User-Agent": "F1CatchupAddon/0.1.0" } });
-            if (response.status === 401 || response.status === 403) return jsonResponse({ error: "Invalid API key" }, 401);
-            if (!response.ok) return jsonResponse({ error: "Torbox API Error" }, response.status);
-            return jsonResponse({ success: true, data: await response.json() });
+            const response = await fetch(TORBOX_API + "/user/me", { 
+                headers: { 
+                    "Authorization": "Bearer " + apiKey, 
+                    "User-Agent": "F1CatchupAddon/0.2.0" 
+                } 
+            });
+            if (response.status === 401 || response.status === 403) {
+                return jsonResponse({ error: "Invalid API key" }, 401);
+            }
+            if (!response.ok) {
+                return jsonResponse({ error: "Torbox API Error" }, response.status);
+            }
+            const userData = await response.json();
+            // Check if user has paid subscription (plan > 0)
+            const isPaid = userData.data && userData.data.plan > 0;
+            return jsonResponse({ 
+                success: true, 
+                data: userData,
+                isPaidUser: isPaid,
+                note: isPaid ? "Full search access available" : "Search requires paid subscription"
+            });
         }
 
         return jsonResponse({ error: "Not found" }, 404);
     } catch (error) {
+        console.error("Request error:", error);
         return jsonResponse({ error: "Internal server error", message: error.message }, 500);
     }
 }
