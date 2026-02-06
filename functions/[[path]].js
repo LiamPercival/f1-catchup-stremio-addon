@@ -492,6 +492,109 @@ async function handleMeta(id, ctx, images) {
     };
 }
 
+// Build keywords for matching a session in torrent titles
+// F1 torrents use varied naming: "Race", "Grand.Prix", "Qualifying", "Practice.1", "FP1", "Sprint", etc.
+function getSessionKeywords(sessionId, searchTerm) {
+    const keywordMap = {
+        fp1:          { must: [["practice.1", "practice 1", "fp1", "free.practice.1"]], not: ["practice.2", "practice.3", "fp2", "fp3"] },
+        fp2:          { must: [["practice.2", "practice 2", "fp2", "free.practice.2"]], not: ["practice.1", "practice.3", "fp1", "fp3"] },
+        fp3:          { must: [["practice.3", "practice 3", "fp3", "free.practice.3"]], not: ["practice.1", "practice.2", "fp1", "fp2"] },
+        qualifying:   { must: [["qualifying", "quali", "qualification"]], not: ["sprint.qualifying", "sprint.quali", "sprint.shootout", "sprint qualifying"] },
+        sprintquali:  { must: [["sprint.qualifying", "sprint.quali", "sprint.shootout", "sprint qualifying", "sprint shootout"]], not: [] },
+        sprint:       { must: [["sprint"]], not: ["sprint.qualifying", "sprint.quali", "sprint.shootout", "sprint qualifying", "sprint shootout"] },
+        grandprix:    { must: [["race", "grand.prix", "grand prix", "gp"]], not: ["practice", "qualifying", "quali", "sprint", "fp1", "fp2", "fp3"] },
+    };
+
+    return keywordMap[sessionId] || { must: [[searchTerm.toLowerCase()]], not: [] };
+}
+
+// Score how relevant a torrent title is to the requested session
+// Returns { score: 0-100, skip: boolean }
+function scoreSessionRelevance(title, keywords, sessionId) {
+    const t = title.toLowerCase().replace(/[._]/g, " ");
+    
+    // Check if title contains any of the "must" keywords (at least one group must match)
+    let mustMatch = false;
+    for (const group of keywords.must) {
+        for (const kw of group) {
+            if (t.includes(kw)) {
+                mustMatch = true;
+                break;
+            }
+        }
+        if (mustMatch) break;
+    }
+
+    // Check if title contains "not" keywords (wrong session)
+    let wrongSession = false;
+    for (const kw of keywords.not) {
+        if (t.includes(kw)) {
+            wrongSession = true;
+            break;
+        }
+    }
+
+    // Special handling: "sprint" keyword also matches "sprint qualifying" / "sprint shootout"
+    // For the sprint race session, we need stricter matching
+    if (sessionId === "sprint" && !wrongSession) {
+        // "sprint" matches but we need to confirm it's not sprint qualifying
+        const sprintIdx = t.indexOf("sprint");
+        if (sprintIdx !== -1) {
+            const after = t.substring(sprintIdx + 6).trim();
+            if (after.startsWith("quali") || after.startsWith("shootout")) {
+                wrongSession = true;
+            }
+        }
+    }
+
+    // For qualifying, make sure "sprint qualifying" doesn't match
+    if (sessionId === "qualifying" && !wrongSession) {
+        const qualiIdx = t.indexOf("quali");
+        if (qualiIdx > 0) {
+            const before = t.substring(Math.max(0, qualiIdx - 8), qualiIdx).trim();
+            if (before.endsWith("sprint")) {
+                wrongSession = true;
+            }
+        }
+    }
+    
+    // For grand prix / race, "grand prix" in the title name is common even for non-race sessions
+    // e.g. "Australian Grand Prix Qualifying" — so only match if no other session keyword present
+    if (sessionId === "grandprix") {
+        const hasOtherSession = ["practice", "qualifying", "quali", "sprint", "fp1", "fp2", "fp3", "shootout"]
+            .some(kw => t.includes(kw));
+        if (hasOtherSession) {
+            wrongSession = true;
+            mustMatch = false;
+        }
+    }
+
+    // "Weekend" or "full" packs contain everything — allow as low relevance fallback
+    const isFullPack = t.includes("weekend") || t.includes("full weekend") || 
+                       t.includes("complete") || t.includes("all sessions");
+
+    if (wrongSession && !isFullPack) {
+        return { score: 0, skip: true };
+    }
+
+    if (mustMatch && !wrongSession) {
+        return { score: 100, skip: false };
+    }
+
+    if (isFullPack) {
+        return { score: 30, skip: false };
+    }
+
+    // Title mentions F1/year but no specific session — could be a full pack or generic
+    // Allow it but with low score
+    if (t.includes("formula") || t.includes("f1")) {
+        return { score: 10, skip: false };
+    }
+
+    // No clear match — skip
+    return { score: 0, skip: true };
+}
+
 // Handle stream request
 async function handleStream(id, apiKey, ctx) {
     if (!id.startsWith("f1catchup:")) return { streams: [] };
@@ -519,9 +622,12 @@ async function handleStream(id, apiKey, ctx) {
         "F1 " + year + " " + race.location + " " + sessionName,
     ];
 
+    // Build session matching keywords for filtering results
+    const sessionKeywords = getSessionKeywords(session, sessionName);
+
     const searchPromises = searchQueries.map(query => searchTorbox(query, apiKey));
     const searchResults = await Promise.allSettled(searchPromises);
-    const streams = [];
+    const candidateStreams = [];
     const seenIds = new Set();
     var apiKeyError = false;
     var subscriptionError = false;
@@ -547,6 +653,13 @@ async function handleStream(id, apiKey, ctx) {
             if (uniqueId) seenIds.add(uniqueId);
 
             const name = item.raw_title || item.name || item.title || "Unknown";
+            
+            // Score this result for session relevance
+            const relevance = scoreSessionRelevance(name, sessionKeywords, session);
+            
+            // Skip results that are clearly for a different session
+            if (relevance.skip) continue;
+
             const size = item.size ? (item.size / 1024 / 1024 / 1024).toFixed(2) + " GB" : "";
             const seeds = item.seeders || item.seed || 0;
             
@@ -558,34 +671,34 @@ async function handleStream(id, apiKey, ctx) {
             ].filter(Boolean).join(" | ");
 
             if (isUsenet) {
-                // Usenet results - use the nzb link or ID
-                streams.push({
+                candidateStreams.push({
                     name: sourceLabel,
                     title: name + "\n" + infoLine,
-                    // For usenet, we'd need to trigger a Torbox download
-                    // Using externalUrl to let Torbox handle the NZB
                     externalUrl: item.nzb || item.link || "https://torbox.app",
                     behaviorHints: { bingeGroup: "f1-" + year + "-" + round },
-                    _seeders: 0, // Usenet doesn't have seeders, sort last
-                    _isUsenet: true
+                    _seeders: 0,
+                    _isUsenet: true,
+                    _relevance: relevance.score
                 });
             } else if (item.magnet || item.hash) {
-                // Torrent results
-                streams.push({
+                candidateStreams.push({
                     name: sourceLabel,
                     title: name + "\n" + infoLine,
                     infoHash: item.hash,
                     sources: item.hash ? ["dht:" + item.hash] : undefined,
                     behaviorHints: { bingeGroup: "f1-" + year + "-" + round },
                     _seeders: seeds,
-                    _isUsenet: false
+                    _isUsenet: false,
+                    _relevance: relevance.score
                 });
             }
-            
-            if (streams.length >= 20) break;
         }
-        if (streams.length >= 20) break;
     }
+
+    // Take up to 20 streams, preferring higher relevance
+    const streams = candidateStreams
+        .sort((a, b) => b._relevance - a._relevance || (b._seeders || 0) - (a._seeders || 0))
+        .slice(0, 20);
 
     if (subscriptionError) {
         return { streams: [{ 
@@ -601,19 +714,13 @@ async function handleStream(id, apiKey, ctx) {
         return { streams: [{ name: "F1 Catchup", title: "No streams found for:\n" + race.name + " - " + sessionDisplayName, externalUrl: "https://torbox.app" }] };
     }
 
-    // Sort: torrents with most seeders first, then usenet
-    streams.sort((a, b) => {
-        // Torrents before usenet
-        if (a._isUsenet !== b._isUsenet) return a._isUsenet ? 1 : -1;
-        // Then by seeders
-        return (b._seeders || 0) - (a._seeders || 0);
-    });
-    
     // Clean up internal properties before returning
+    // Already sorted by relevance then seeders above
     return { streams: streams.map(s => { 
         const copy = Object.assign({}, s); 
         delete copy._seeders; 
         delete copy._isUsenet;
+        delete copy._relevance;
         return copy; 
     }) };
 }
