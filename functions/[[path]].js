@@ -6,6 +6,25 @@ const OPENF1_API = "https://api.openf1.org/v1";
 const TORBOX_API = "https://api.torbox.app/v1/api";
 const TORBOX_SEARCH_API = "https://search-api.torbox.app";
 
+// TVDB Configuration
+const TVDB_SERIES_ID = 387219;
+// Number of testing episodes at the start of each season
+const TESTING_EPISODES = {
+    2023: 6,
+    2024: 5,
+    2025: 6
+};
+// Map F1 Catchup session IDs to their 1-based index in a race weekend
+const SESSION_INDEX = {
+    "fp1": 1,
+    "fp2": 2,
+    "fp3": 3,
+    "sprintquali": 2, // Sprint Shootout / Sprint Qualifying
+    "sprint": 3,      // Sprint Race
+    "qualifying": 4,
+    "grandprix": 5
+};
+
 // Country codes for flags
 const COUNTRY_FLAGS = {
     "australia": "au", "china": "cn", "japan": "jp", "bahrain": "bh",
@@ -281,6 +300,112 @@ async function getCalendar(year, ctx) {
         console.error("Failed to fetch " + year + " calendar:", error);
         return [];
     }
+}
+
+// Calculate TVDB Episode number
+function getTvdbEpisode(year, round, sessionId) {
+    if (!TESTING_EPISODES[year]) return null;
+
+    const testingCount = TESTING_EPISODES[year];
+    const sessionIdx = SESSION_INDEX[sessionId];
+
+    if (!sessionIdx) return null;
+
+    // Formula: testing_episodes + (round_number - 1) * 5 + session_index
+    return testingCount + (round - 1) * 5 + sessionIdx;
+}
+
+// Search Torbox using TVDB ID
+async function searchTorboxTvdb(seriesId, season, episode, apiKey) {
+    if (!apiKey) return { torrents: [], error: "No API key provided" };
+
+    // Construct URL for TVDB search
+    // Using media_type=series is required for ID lookups
+    const params = `?media_type=series&season=${season}&episode=${episode}`;
+    const endpoints = [
+        {
+            name: "Torrents",
+            url: TORBOX_SEARCH_API + "/torrents/tvdb:" + seriesId + params,
+            type: "torrent"
+        },
+        {
+            name: "Usenet",
+            url: TORBOX_SEARCH_API + "/usenet/tvdb:" + seriesId + params,
+            type: "usenet"
+        }
+    ];
+
+    const headers = {
+        "Authorization": "Bearer " + apiKey,
+        "User-Agent": "F1CatchupAddon/0.2.0",
+        "Content-Type": "application/json"
+    };
+
+    // Re-use the parallel fetch logic (abstracting could be cleaner but keeping it simple for now)
+    const fetchPromises = endpoints.map(async (endpoint) => {
+        try {
+            const response = await fetch(endpoint.url, { headers });
+
+            if (response.status === 401 || response.status === 403) {
+                console.error("Auth error from " + endpoint.name + ":", response.status);
+                return { endpoint: endpoint.name, type: endpoint.type, results: [], authError: true };
+            }
+
+            if (!response.ok) {
+                // 404 is expected if no results found for specific episode
+                if (response.status !== 404) {
+                    console.error("HTTP error from " + endpoint.name + ":", response.status);
+                }
+                return { endpoint: endpoint.name, type: endpoint.type, results: [], error: response.status };
+            }
+
+            const data = await response.json();
+            let results = [];
+
+            if (data.data && Array.isArray(data.data)) results = data.data;
+            else if (Array.isArray(data)) results = data;
+
+            // Normalize structure if needed (Torbox usually returns standard format for ID search)
+            if (data.data && data.data.torrents) results = data.data.torrents;
+            if (data.data && data.data.nzbs) results = data.data.nzbs;
+
+            results = results.map(r => ({ ...r, _sourceType: endpoint.type }));
+            return { endpoint: endpoint.name, type: endpoint.type, results, authError: false };
+        } catch (error) {
+            console.error("Search error for " + endpoint.name + ":", error.message || error);
+            return { endpoint: endpoint.name, type: endpoint.type, results: [], error: error.message };
+        }
+    });
+
+    const responses = await Promise.all(fetchPromises);
+
+    const allAuthErrors = responses.every(r => r.authError);
+    if (allAuthErrors) {
+        return { torrents: [], error: "invalid_api_key", detail: "Search requires a paid TorBox subscription" };
+    }
+
+    const allResults = [];
+    const seenIds = new Set();
+    const successfulEndpoints = [];
+
+    for (const response of responses) {
+        if (response.results.length > 0) {
+            successfulEndpoints.push(response.endpoint);
+            for (const result of response.results) {
+                const id = result.hash || result.nzb_id || result.id || (result.raw_title + result.size);
+                if (!seenIds.has(id)) {
+                    seenIds.add(id);
+                    allResults.push(result);
+                }
+            }
+        }
+    }
+
+    return {
+        torrents: allResults,
+        error: allResults.length > 0 ? null : "No results found",
+        endpoint: successfulEndpoints.join(" + ")
+    };
 }
 
 // Search Torbox - Using the Voyager Search API (search-api.torbox.app)
@@ -625,12 +750,72 @@ async function handleStream(id, apiKey, ctx) {
     // Build session matching keywords for filtering results
     const sessionKeywords = getSessionKeywords(session, sessionName);
 
+    // Try TVDB search first if supported
+    let tvdbResults = { torrents: [], error: "Not attempted" };
+    const tvdbEpisode = getTvdbEpisode(parseInt(year), round, session);
+
+    if (tvdbEpisode) {
+        console.log(`Attempting TVDB search for ${year} R${round} ${session} -> S${year}E${tvdbEpisode}`);
+        tvdbResults = await searchTorboxTvdb(TVDB_SERIES_ID, year, tvdbEpisode, apiKey);
+    }
+
+    // Prepare search promises (Text search is always a fallback or complement)
     const searchPromises = searchQueries.map(query => searchTorbox(query, apiKey));
-    const searchResults = await Promise.allSettled(searchPromises);
+
+    // Execute searches
+    // We prioritize TVDB results if available, but can mix them or use text as fallback
+    // Current strategy: Fetch both, prioritize TVDB
+    const textSearchResultsPromise = Promise.allSettled(searchPromises);
+
     const candidateStreams = [];
     const seenIds = new Set();
     var apiKeyError = false;
     var subscriptionError = false;
+
+    // Process TVDB Results
+    if (tvdbResults.torrents && tvdbResults.torrents.length > 0) {
+        for (const item of tvdbResults.torrents) {
+             // Handle both torrent and usenet results
+             const isUsenet = item._sourceType === "usenet" || item.nzb_id;
+             const uniqueId = item.hash || item.nzb_id || item.id;
+
+             if (uniqueId && seenIds.has(uniqueId)) continue;
+             if (uniqueId) seenIds.add(uniqueId);
+
+             const name = item.raw_title || item.name || item.title || "Unknown";
+             const size = item.size ? (item.size / 1024 / 1024 / 1024).toFixed(2) + " GB" : "";
+             const seeds = item.seeders || item.seed || 0;
+
+             const sourceLabel = isUsenet ? "Torbox NZB (TVDB)" : "Torbox (TVDB)";
+             const infoLine = [
+                 size,
+                 isUsenet ? "Usenet" : (seeds ? "Seeds: " + seeds : "")
+             ].filter(Boolean).join(" | ");
+
+             const stream = {
+                 name: sourceLabel,
+                 title: name + "\n" + infoLine,
+                 behaviorHints: { bingeGroup: "f1-" + year + "-" + round },
+                 _seeders: isUsenet ? 0 : seeds,
+                 _isUsenet: isUsenet,
+                 _relevance: 1000 // High relevance for ID matches
+             };
+
+            if (isUsenet) {
+                stream.externalUrl = item.nzb || item.link || "https://torbox.app";
+            } else {
+                stream.infoHash = item.hash;
+                stream.sources = item.hash ? ["dht:" + item.hash] : undefined;
+            }
+            candidateStreams.push(stream);
+        }
+    } else if (tvdbResults.error === "invalid_api_key") {
+        apiKeyError = true;
+        if (tvdbResults.detail && tvdbResults.detail.includes("paid")) subscriptionError = true;
+    }
+
+    // Process Text Search Results (fallback or supplement)
+    const searchResults = await textSearchResultsPromise;
 
     for (const result of searchResults) {
         if (result.status !== "fulfilled") continue;
