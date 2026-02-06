@@ -290,15 +290,16 @@ async function searchTorbox(query, apiKey) {
     if (!apiKey) return { torrents: [], error: "No API key provided" };
 
     // Search both torrents and usenet endpoints in parallel
+    // API uses path-based queries: /torrents/search/{query} NOT ?query=
     const endpoints = [
         {
             name: "Torrents",
-            url: TORBOX_SEARCH_API + "/torrents/search?query=" + encodeURIComponent(query),
+            url: TORBOX_SEARCH_API + "/torrents/search/" + encodeURIComponent(query),
             type: "torrent"
         },
         {
             name: "Usenet",
-            url: TORBOX_SEARCH_API + "/usenet/search?query=" + encodeURIComponent(query),
+            url: TORBOX_SEARCH_API + "/usenet/search/" + encodeURIComponent(query),
             type: "usenet"
         }
     ];
