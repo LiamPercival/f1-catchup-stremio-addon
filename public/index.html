@@ -182,9 +182,20 @@
         btn.addEventListener('click', () => {
             const key = input.value.trim();
             if (!key) return;
+
             const manifestUrl = window.location.origin + '/' + encodeURIComponent(key) + '/manifest.json';
-            const stremioUrl = manifestUrl.replace(/^https?:\/\//, 'stremio://');
-            window.location.href = stremioUrl;
+
+            // Check if we're in Stremio's embedded webview
+            if (window.parent !== window) {
+                // Send message to Stremio parent window
+                window.parent.postMessage({
+                    type: 'addon-install',
+                    url: manifestUrl
+                }, '*');
+            }
+
+            // Also try the direct stremio:// protocol link
+            window.location.href = 'stremio://' + manifestUrl.replace(/^https?:\/\//, '');
         });
     </script>
 </body>
