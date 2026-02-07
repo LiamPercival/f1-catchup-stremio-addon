@@ -1,24 +1,20 @@
-# F1 Calendar & Catalog - Stremio Addon
+# F1 Catchup - Stremio Addon
 
-A Stremio addon that provides a comprehensive Formula 1 calendar and catalog, fully mapped to TheTVDB metadata.
+A Stremio addon that provides Formula 1 metadata sourced directly from TheTVDB, enabling stream addons like Torrentio to find the correct content for every session.
 
-## Features
+## Setup
 
-- **Accurate Session Lists**: Includes all Practice, Qualifying, Sprint, and Race sessions.
-- **TVDB Integration**: Maps sessions to TheTVDB Series ID 387219, allowing other addons (like Torrentio) to find streams accurately.
-- **Season Support**: Covers 2023, 2024, and 2025 seasons.
-- **Automated Updates**: Fetches latest schedule from OpenF1/Ergast APIs.
+1. Get a free API key from [TheTVDB](https://thetvdb.com/api-information).
+2. Install the addon in Stremio — you'll be prompted to enter your TVDB API key.
+3. Browse the "Formula 1" catalog, pick a season and session, and Stremio resolves streams via your installed providers.
 
 ## How It Works
 
-1. Install the addon in Stremio.
-2. Browse the "Formula 1" catalog.
-3. Select a season (year) and episode (session).
-4. Stremio will search installed stream providers (e.g., Torrentio) using the precise TVDB ID (e.g., `S2024E09`).
+The addon fetches episode data from TVDB Series 387219 (Formula 1) and maps it to Stremio's metadata format. Every practice, qualifying, sprint, and race session has a TVDB episode entry, so stream providers like Torrentio can match content accurately using IDs like `S2024E09`.
 
 ## Development
 
-This addon is built for Cloudflare Pages.
+Built for Cloudflare Pages.
 
 ```bash
 npm install
@@ -27,4 +23,6 @@ npm run dev
 
 ## Deployment
 
-Push to the `main` branch to deploy to Cloudflare Pages.
+```bash
+npm run deploy
+```
