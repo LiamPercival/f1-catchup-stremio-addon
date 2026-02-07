@@ -1,7 +1,6 @@
 // F1 Catchup - Catalog & Meta Provider
 // Mapped to TheTVDB Series ID 387219 for integration with other Stremio addons
 
-const F1_API = "https://api.jolpi.ca/ergast/f1";
 const OPENF1_API = "https://api.openf1.org/v1";
 
 // TVDB Configuration
