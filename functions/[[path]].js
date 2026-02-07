@@ -112,8 +112,8 @@ async function fetchTvdbEpisodes(token, ctx) {
 
 // --- Stremio Handlers ---
 
-function getManifest(images) {
-    return {
+function getManifest(images, isConfigured = false) {
+    const manifest = {
         id: "org.f1catchup.catalog",
         version: "2.0.0",
         name: "F1 Catchup",
@@ -129,7 +129,7 @@ function getManifest(images) {
             extra: [{ name: "skip", isRequired: false }]
         }],
         idPrefixes: ["tvdb:"],
-        behaviorHints: { configurable: true, configurationRequired: true },
+        behaviorHints: { configurable: true },
         config: [
             {
                 key: "tvdbApiKey",
@@ -139,6 +139,13 @@ function getManifest(images) {
             }
         ]
     };
+
+    // Only require configuration if not already configured
+    if (!isConfigured) {
+        manifest.behaviorHints.configurationRequired = true;
+    }
+
+    return manifest;
 }
 
 async function handleCatalog(images) {
@@ -244,9 +251,9 @@ export async function onRequest(ctx) {
             resourceParts = pathParts.slice(1);
         }
 
-        // Configured manifest
+        // Configured manifest - API key is in the URL, so addon is configured
         if (resourceParts[0] === "manifest.json") {
-            return jsonResponse(getManifest(images));
+            return jsonResponse(getManifest(images, !!apiKey));
         }
 
         // Find resource in remaining parts
