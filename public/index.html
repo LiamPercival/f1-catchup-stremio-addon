@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>F1 Calendar & Catalog - Stremio Addon</title>
+    <title>F1 Catchup - Stremio Addon</title>
     <style>
         * {
             margin: 0;
@@ -54,8 +55,40 @@
 
         .subtitle {
             color: #bbb;
-            margin-bottom: 30px;
+            margin-bottom: 25px;
             line-height: 1.6;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .input-group label {
+            display: block;
+            font-size: 0.85rem;
+            color: #aaa;
+            margin-bottom: 8px;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .input-group input::placeholder {
+            color: #666;
+        }
+
+        .input-group input:focus {
+            border-color: #e10600;
         }
 
         .btn {
@@ -78,27 +111,60 @@
             box-shadow: 0 10px 30px rgba(225, 6, 0, 0.4);
         }
 
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .api-link {
+            display: inline-block;
+            margin-top: 15px;
+            font-size: 0.85rem;
+            color: #888;
+        }
+
+        .api-link a {
+            color: #ff6b6b;
+            text-decoration: none;
+        }
+
+        .api-link a:hover {
+            text-decoration: underline;
+        }
+
         .footer {
-            margin-top: 30px;
+            margin-top: 25px;
             font-size: 0.85rem;
             color: #666;
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div class="logo">
             <img src="/images/logo.png" alt="F1 Logo">
         </div>
 
-        <h1>F1 Calendar</h1>
+        <h1>F1 Catchup</h1>
         <p class="subtitle">
-            Accurate Formula 1 sessions for Stremio.<br>
-            Maps Practice, Qualifying, and Races to TheTVDB<br>
-            so addons like Torrentio can find streams.
+            Formula 1 sessions for Stremio, powered by TheTVDB.<br>
+            Works with Torrentio and other stream providers.
         </p>
 
-        <a id="installLink" href="#" class="btn">Install Addon</a>
+        <div class="input-group">
+            <label for="apiKey">TheTVDB API Key</label>
+            <input type="text" id="apiKey" placeholder="Enter your TVDB API key" autocomplete="off">
+        </div>
+
+        <button id="installBtn" class="btn" disabled>Install Addon</button>
+
+        <div class="api-link">
+            Don't have a key? <a href="https://thetvdb.com/api-information" target="_blank">Get one free from
+                TheTVDB</a>
+        </div>
 
         <div class="footer">
             Works with Stremio Desktop, Android, and Web
@@ -106,9 +172,21 @@
     </div>
 
     <script>
-        const manifestUrl = window.location.origin + '/manifest.json';
-        const stremioUrl = manifestUrl.replace(/^https?:\/\//, 'stremio://');
-        document.getElementById('installLink').href = stremioUrl;
+        const input = document.getElementById('apiKey');
+        const btn = document.getElementById('installBtn');
+
+        input.addEventListener('input', () => {
+            btn.disabled = !input.value.trim();
+        });
+
+        btn.addEventListener('click', () => {
+            const key = input.value.trim();
+            if (!key) return;
+            const manifestUrl = window.location.origin + '/' + encodeURIComponent(key) + '/manifest.json';
+            const stremioUrl = manifestUrl.replace(/^https?:\/\//, 'stremio://');
+            window.location.href = stremioUrl;
+        });
     </script>
 </body>
+
 </html>
