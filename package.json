@@ -1,7 +1,7 @@
 {
   "name": "f1-catchup-addon",
-  "version": "0.3.0",
-  "description": "Stremio addon for Formula 1 content with Torbox integration (Torrents + Usenet)",
+  "version": "1.0.0",
+  "description": "Stremio addon providing F1 Calendar/Catalog mapped to TheTVDB",
   "private": true,
   "scripts": {
     "dev": "npx wrangler pages dev public --compatibility-date=2024-01-01",
@@ -12,8 +12,8 @@
     "addon",
     "f1",
     "formula1",
-    "torbox",
-    "usenet"
+    "calendar",
+    "tvdb"
   ],
   "license": "MIT"
 }
